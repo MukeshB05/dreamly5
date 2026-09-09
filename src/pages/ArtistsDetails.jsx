@@ -168,7 +168,7 @@ const ArtistsDetails = () => {
           </div>
         </div>
       </div>
-      <Player />
+      <MusicContext />
       <Navigator />
       <Footer />
     </>
