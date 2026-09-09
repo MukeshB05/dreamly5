@@ -192,7 +192,7 @@ const PlaylistDetails = () => {
         </div>
       </div>
 
-      <Player />
+      <MusicContext />
       <Navigator />
       <Footer />
     </>
