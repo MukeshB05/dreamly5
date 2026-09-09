@@ -39,7 +39,7 @@ const Home = () => {
        <MainSection />
        <Footer />
        <Navigator />
-       <Player />
+       <MusicContext />
     </>
   );
 };
