@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Navbar from "../components/Navbar";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import Navigator from "../components/Navigator";
 import SongsList from "../components/SongsList";
 
@@ -151,7 +151,7 @@ const Favourite = () => {
           )}
       </div>
 
-      <Player />
+      <MusicContext />
       <Navigator />
     </>
   );
