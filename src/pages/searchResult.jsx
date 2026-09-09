@@ -117,7 +117,7 @@ const SearchResult = () => {
       </div>
       <Footer />
       <Navigator />
-      <Player />
+      <MusicContext />
     </>
   );
 };
