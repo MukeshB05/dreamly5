@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { getSongbyQuery, searchAlbumByQuery, searchArtistByQuery, searchPlayListByQuery } from "../../fetch";
 import Navbar from "../components/Navbar";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import Footer from "../components/footer";
 import SongGrid from "../components/SongGrid";
 import { MdOutlineKeyboardArrowLeft, MdOutlineKeyboardArrowRight } from "react-icons/md";
