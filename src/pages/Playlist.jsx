@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Navbar from "../components/Navbar";
 import Navigator from "../components/Navigator";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import { genreData } from "../genreData";
 import { useNavigate } from "react-router";
 import he from "he";
