@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import { fetchplaylistsByID } from "../../fetch";
 import Footer from "../components/footer";
 import MusicContext from "../context/MusicContext";
