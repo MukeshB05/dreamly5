@@ -43,7 +43,7 @@ function Playlist() {
 
     try {
       setLoading(true);
-      const response = await fetch(`https://jiosavan.clashgram.workers.dev/api/search/playlists?query=${genre.toLowerCase()}&limit=130`);
+      const response = await fetch(`https://jiosaavndev.vercel.app/api/search/playlists?query=${genre.toLowerCase()}&limit=130`);
       // const response = await fetch(`https://saavn.sumit.co/api/search/playlists?query=${genre.toLowerCase()}&limit=130`);
       
       const data = await response.json();
