@@ -112,7 +112,7 @@ function Playlist() {
           </div>
         </div>
         </div>
-        <Player />
+        <MusicContext />
         <Navigator />
       </>
     );
