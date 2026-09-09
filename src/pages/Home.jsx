@@ -1,5 +1,5 @@
 import Navbar from "../components/Navbar";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import Footer from "../components/footer";
 import Navigator from "../components/Navigator";
 import MainSection from "../components/MainSection";
