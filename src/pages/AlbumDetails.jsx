@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom"; // To fetch album ID from URL
 import Navbar from "../components/Navbar";
 import SongsList from "../components/SongsList";
-import Player from "../components/Player";
+import MusicContext from "../components/MusicContext";
 import { fetchAlbumByID, getSuggestionSong } from "../../fetch";
 import Footer from "../components/footer";
 import Navigator from "../components/Navigator";
@@ -205,7 +205,7 @@ const AlbumDetail = () => {
 
         </div> 
 
-      <Player />
+      <MusicContext />
       <Navigator />
       <Footer />
     </>
