@@ -1,7 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { FaHeart, FaRegHeart } from "react-icons/fa6";
-import { FaPlay } from "react-icons/fa";
+import { FaHeart, FaRegHeart, FaPlay } from "react-icons/fa6";
 
 import Navbar from "../components/Navbar";
 import Footer from "../components/footer";
@@ -11,34 +10,42 @@ import Navigator from "../components/Navigator";
 import MusicContext from "../context/MusicContext";
 import { fetchplaylistsByID } from "../../fetch";
 
+const DEFAULT_IMAGE = "/default-image.png";
+
 const PlaylistDetails = () => {
   const { id } = useParams();
 
-  const { playMusic } = useContext(MusicContext);
+  const musicContext = useContext(MusicContext);
+  const playMusic = musicContext?.playMusic;
 
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
 
   /*
-   * Get liked playlists from localStorage
+   * ==========================================
+   * LIKED PLAYLISTS
+   * ==========================================
    */
+
   const [likedPlaylists, setLikedPlaylists] = useState(() => {
     try {
-      const savedPlaylists = localStorage.getItem("likedPlaylists");
+      const savedPlaylists =
+        localStorage.getItem("likedPlaylists");
 
       if (!savedPlaylists) {
         return [];
       }
 
-      const parsedPlaylists = JSON.parse(savedPlaylists);
+      const parsedPlaylists =
+        JSON.parse(savedPlaylists);
 
       return Array.isArray(parsedPlaylists)
         ? parsedPlaylists
         : [];
     } catch (err) {
       console.error(
-        "Error reading likedPlaylists from localStorage:",
+        "Error reading likedPlaylists:",
         err
       );
 
@@ -47,8 +54,11 @@ const PlaylistDetails = () => {
   });
 
   /*
-   * Fetch playlist details
+   * ==========================================
+   * FETCH PLAYLIST DETAILS
+   * ==========================================
    */
+
   useEffect(() => {
     let isMounted = true;
 
@@ -61,29 +71,75 @@ const PlaylistDetails = () => {
 
       try {
         setLoading(true);
-        setError(null);
+        setError("");
 
-        const response = await fetchplaylistsByID(id);
+        const response =
+          await fetchplaylistsByID(id);
 
-        console.log("Playlist API Response:", response);
+        console.log(
+          "Playlist API Response:",
+          response
+        );
 
         if (!response) {
-          throw new Error("Empty API response");
+          throw new Error(
+            "Empty API response."
+          );
         }
 
-        if (!response.data) {
-          throw new Error("Playlist data not found");
+        if (!isMounted) {
+          return;
         }
 
-        if (isMounted) {
-          setDetails(response);
+        /*
+         * Support multiple possible API formats.
+         *
+         * Format 1:
+         * response.data
+         *
+         * Format 2:
+         * response.data.data
+         *
+         * Format 3:
+         * response itself is playlist
+         */
+
+        let playlistData = response;
+
+        if (
+          response?.data &&
+          typeof response.data === "object"
+        ) {
+          playlistData = response.data;
         }
+
+        if (
+          playlistData?.data &&
+          typeof playlistData.data === "object"
+        ) {
+          playlistData = playlistData.data;
+        }
+
+        if (
+          !playlistData ||
+          typeof playlistData !== "object"
+        ) {
+          throw new Error(
+            "Playlist data not found."
+          );
+        }
+
+        setDetails(playlistData);
       } catch (err) {
-        console.error("Playlist Details Error:", err);
+        console.error(
+          "Playlist Details Error:",
+          err
+        );
 
         if (isMounted) {
           setError(
-            "Failed to fetch playlist details. Please try again later."
+            err?.message ||
+              "Failed to fetch playlist details. Please try again later."
           );
         }
       } finally {
@@ -101,8 +157,11 @@ const PlaylistDetails = () => {
   }, [id]);
 
   /*
-   * Save liked playlists to localStorage
+   * ==========================================
+   * SAVE LIKED PLAYLISTS
+   * ==========================================
    */
+
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -118,35 +177,606 @@ const PlaylistDetails = () => {
   }, [likedPlaylists]);
 
   /*
-   * Loading
+   * ==========================================
+   * NORMALIZE PLAYLIST DATA
+   * ==========================================
    */
+
+  const playlistData = useMemo(() => {
+    if (!details) {
+      return {};
+    }
+
+    /*
+     * If fetch function returns:
+     *
+     * {
+     *   data: {...}
+     * }
+     */
+
+    if (
+      details?.data &&
+      typeof details.data === "object" &&
+      !Array.isArray(details.data)
+    ) {
+      return details.data;
+    }
+
+    return details;
+  }, [details]);
+
+  /*
+   * ==========================================
+   * GET SONGS
+   * ==========================================
+   */
+
+  const songs = useMemo(() => {
+    if (!playlistData) {
+      return [];
+    }
+
+    if (Array.isArray(playlistData.songs)) {
+      return playlistData.songs;
+    }
+
+    if (Array.isArray(playlistData.song)) {
+      return playlistData.song;
+    }
+
+    if (Array.isArray(playlistData.items)) {
+      return playlistData.items;
+    }
+
+    if (
+      Array.isArray(
+        playlistData.tracks
+      )
+    ) {
+      return playlistData.tracks;
+    }
+
+    return [];
+  }, [playlistData]);
+
+  /*
+   * ==========================================
+   * GET IMAGE URL
+   * ==========================================
+   */
+
+  const getImageUrl = (image) => {
+    if (!image) {
+      return DEFAULT_IMAGE;
+    }
+
+    /*
+     * String
+     */
+
+    if (typeof image === "string") {
+      return image;
+    }
+
+    /*
+     * Array
+     */
+
+    if (Array.isArray(image)) {
+      const validImages = image
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+
+          if (
+            item &&
+            typeof item === "object"
+          ) {
+            return (
+              item.url ||
+              item.link ||
+              item.src ||
+              null
+            );
+          }
+
+          return null;
+        })
+        .filter(Boolean);
+
+      if (validImages.length > 0) {
+        /*
+         * Last image is normally highest quality.
+         */
+
+        return validImages[
+          validImages.length - 1
+        ];
+      }
+    }
+
+    /*
+     * Object
+     */
+
+    if (
+      typeof image === "object"
+    ) {
+      return (
+        image.url ||
+        image.link ||
+        image.src ||
+        DEFAULT_IMAGE
+      );
+    }
+
+    return DEFAULT_IMAGE;
+  };
+
+  /*
+   * ==========================================
+   * PLAYLIST IMAGE
+   * ==========================================
+   */
+
+  const playlistImage = getImageUrl(
+    playlistData?.image
+  );
+
+  /*
+   * ==========================================
+   * SONG IMAGE
+   * ==========================================
+   */
+
+  const getSongImage = (song) => {
+    if (!song) {
+      return DEFAULT_IMAGE;
+    }
+
+    return getImageUrl(song.image);
+  };
+
+  /*
+   * ==========================================
+   * AUDIO URL
+   * ==========================================
+   */
+
+  const getAudioUrl = (song) => {
+    if (!song) {
+      return null;
+    }
+
+    /*
+     * downloadUrl ARRAY
+     *
+     * Example:
+     *
+     * [
+     *   { quality: "96kbps", url: "..." },
+     *   { quality: "160kbps", url: "..." },
+     *   { quality: "320kbps", url: "..." }
+     * ]
+     */
+
+    if (
+      Array.isArray(song.downloadUrl)
+    ) {
+      const urls = song.downloadUrl
+        .map((item) => {
+          if (
+            typeof item === "string"
+          ) {
+            return item;
+          }
+
+          if (
+            item &&
+            typeof item === "object"
+          ) {
+            return (
+              item.url ||
+              item.link ||
+              item.downloadUrl ||
+              null
+            );
+          }
+
+          return null;
+        })
+        .filter(
+          (url) =>
+            typeof url === "string" &&
+            url.trim() !== ""
+        );
+
+      if (urls.length > 0) {
+        /*
+         * Use highest/last available quality.
+         */
+
+        return urls[
+          urls.length - 1
+        ];
+      }
+    }
+
+    /*
+     * downloadUrl STRING
+     */
+
+    if (
+      typeof song.downloadUrl ===
+      "string"
+    ) {
+      return song.downloadUrl;
+    }
+
+    /*
+     * downloadUrl OBJECT
+     */
+
+    if (
+      song.downloadUrl &&
+      typeof song.downloadUrl ===
+        "object"
+    ) {
+      return (
+        song.downloadUrl.url ||
+        song.downloadUrl.link ||
+        null
+      );
+    }
+
+    /*
+     * Other possible API properties.
+     */
+
+    const possibleUrls = [
+      song.audioUrl,
+      song.audio,
+      song.streamUrl,
+      song.mediaUrl,
+      song.url,
+    ];
+
+    const validUrl =
+      possibleUrls.find(
+        (url) =>
+          typeof url === "string" &&
+          url.trim() !== ""
+      );
+
+    return validUrl || null;
+  };
+
+  /*
+   * ==========================================
+   * PLAY SONG
+   * ==========================================
+   */
+
+  const playSong = (
+    song,
+    index = 0
+  ) => {
+    if (!song) {
+      console.error(
+        "Cannot play empty song."
+      );
+
+      return;
+    }
+
+    if (
+      typeof playMusic !== "function"
+    ) {
+      console.error(
+        "MusicContext.playMusic is not available."
+      );
+
+      return;
+    }
+
+    const audioUrl =
+      getAudioUrl(song);
+
+    if (!audioUrl) {
+      console.error(
+        "No playable audio URL found:",
+        song
+      );
+
+      return;
+    }
+
+    const songName =
+      song?.name ||
+      song?.title ||
+      song?.songName ||
+      "Unknown Song";
+
+    const artists =
+      song?.artists ||
+      song?.artist ||
+      [];
+
+    const duration =
+      Number(song?.duration) ||
+      Number(
+        song?.durationInSeconds
+      ) ||
+      0;
+
+    const image =
+      getSongImage(song);
+
+    console.log(
+      "Playing:",
+      {
+        index,
+        id: song?.id,
+        name: songName,
+        audioUrl,
+        duration,
+        image,
+        artists,
+      }
+    );
+
+    try {
+      /*
+       * Keep this argument order
+       * compatible with MusicContext.
+       */
+
+      playMusic(
+        audioUrl,
+        songName,
+        duration,
+        image,
+        song?.id,
+        artists,
+        songs
+      );
+    } catch (err) {
+      console.error(
+        "Error calling playMusic:",
+        err
+      );
+    }
+  };
+
+  /*
+   * ==========================================
+   * PLAY FIRST SONG
+   * ==========================================
+   */
+
+  const playFirstSong = () => {
+    if (!songs.length) {
+      console.warn(
+        "Playlist has no songs."
+      );
+
+      return;
+    }
+
+    playSong(
+      songs[0],
+      0
+    );
+  };
+
+  /*
+   * ==========================================
+   * LIKE / UNLIKE
+   * ==========================================
+   */
+
+  const playlistId =
+    playlistData?.id;
+
+  const isLiked =
+    likedPlaylists.some(
+      (playlist) =>
+        String(playlist?.id) ===
+        String(playlistId)
+    );
+
+  const toggleLikePlaylist = () => {
+    if (!playlistId) {
+      console.warn(
+        "Playlist ID is missing."
+      );
+
+      return;
+    }
+
+    setLikedPlaylists(
+      (previousPlaylists) => {
+        const alreadyLiked =
+          previousPlaylists.some(
+            (playlist) =>
+              String(
+                playlist?.id
+              ) ===
+              String(playlistId)
+          );
+
+        /*
+         * UNLIKE
+         */
+
+        if (alreadyLiked) {
+          return previousPlaylists.filter(
+            (playlist) =>
+              String(
+                playlist?.id
+              ) !==
+              String(playlistId)
+          );
+        }
+
+        /*
+         * LIKE
+         */
+
+        return [
+          ...previousPlaylists,
+          {
+            id: playlistId,
+            name:
+              playlistData?.name ||
+              playlistData?.title ||
+              "Unknown Playlist",
+            image: playlistImage,
+          },
+        ];
+      }
+    );
+  };
+
+  /*
+   * ==========================================
+   * TOTAL DURATION
+   * ==========================================
+   */
+
+  const totalDuration =
+    useMemo(() => {
+      return songs.reduce(
+        (total, song) => {
+          const duration =
+            Number(
+              song?.duration
+            ) ||
+            Number(
+              song?.durationInSeconds
+            ) ||
+            0;
+
+          return (
+            total + duration
+          );
+        },
+        0
+      );
+    }, [songs]);
+
+  /*
+   * ==========================================
+   * FORMAT DURATION
+   * ==========================================
+   */
+
+  const formatDuration = (
+    duration
+  ) => {
+    const totalSeconds =
+      Math.max(
+        0,
+        Math.floor(
+          Number(duration) || 0
+        )
+      );
+
+    if (
+      totalSeconds <= 0
+    ) {
+      return "0m";
+    }
+
+    const hours =
+      Math.floor(
+        totalSeconds / 3600
+      );
+
+    const minutes =
+      Math.floor(
+        (totalSeconds % 3600) /
+          60
+      );
+
+    const seconds =
+      totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+
+    if (minutes > 0) {
+      return `${minutes}m`;
+    }
+
+    return `${seconds}s`;
+  };
+
+  /*
+   * ==========================================
+   * SONG COUNT
+   * ==========================================
+   */
+
+  const songCount =
+    Number(
+      playlistData?.songCount
+    ) ||
+    Number(
+      playlistData?.songsCount
+    ) ||
+    songs.length;
+
+  /*
+   * ==========================================
+   * LOADING
+   * ==========================================
+   */
+
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center">
         <img
           src="/Loading.gif"
           alt="Loading..."
-          className="w-16 h-16 object-contain"
+          className="h-16 w-16 object-contain"
         />
       </div>
     );
   }
 
   /*
-   * Error
+   * ==========================================
+   * ERROR
+   * ==========================================
    */
+
   if (error) {
     return (
       <div className="flex h-screen w-screen items-center justify-center px-5">
         <div className="text-center">
-          <p className="text-red-500 text-lg font-semibold">
+          <p className="text-lg font-semibold text-red-500">
             {error}
           </p>
 
           <button
             type="button"
-            onClick={() => window.location.reload()}
-            className="mt-4 px-5 py-2 rounded-lg border border-gray-500 hover:bg-gray-700 transition"
+            onClick={() =>
+              window.location.reload()
+            }
+            className="
+              mt-4
+              rounded-lg
+              border
+              border-gray-500
+              px-5
+              py-2
+              transition
+              hover:bg-gray-700
+            "
           >
             Try Again
           </button>
@@ -156,330 +786,110 @@ const PlaylistDetails = () => {
   }
 
   /*
-   * Playlist data
+   * ==========================================
+   * MAIN
+   * ==========================================
    */
-  const playlistData = details?.data || {};
-
-  /*
-   * Songs
-   */
-  const songs = Array.isArray(playlistData.songs)
-    ? playlistData.songs
-    : [];
-
-  /*
-   * Playlist image
-   */
-  const playlistImage =
-    playlistData.image?.[2]?.url ||
-    playlistData.image?.[1]?.url ||
-    playlistData.image?.[0]?.url ||
-    (typeof playlistData.image === "string"
-      ? playlistData.image
-      : "/default-image.png");
-
-  /*
-   * Check whether playlist is liked
-   */
-  const isLiked = likedPlaylists.some(
-    (playlist) =>
-      String(playlist?.id) === String(playlistData?.id)
-  );
-
-  /*
-   * Like / Unlike playlist
-   */
-  const toggleLikePlaylist = () => {
-    if (!playlistData?.id) {
-      return;
-    }
-
-    setLikedPlaylists((previousPlaylists) => {
-      const alreadyLiked = previousPlaylists.some(
-        (playlist) =>
-          String(playlist?.id) ===
-          String(playlistData.id)
-      );
-
-      /*
-       * Unlike
-       */
-      if (alreadyLiked) {
-        return previousPlaylists.filter(
-          (playlist) =>
-            String(playlist?.id) !==
-            String(playlistData.id)
-        );
-      }
-
-      /*
-       * Like
-       */
-      return [
-        ...previousPlaylists,
-        {
-          id: playlistData.id,
-          name:
-            playlistData.name || "Unknown Playlist",
-          image: playlistImage,
-        },
-      ];
-    });
-  };
-
-  /*
-   * Get song image
-   */
-  const getSongImage = (song) => {
-    if (!song) {
-      return [];
-    }
-
-    if (Array.isArray(song.image)) {
-      return song.image;
-    }
-
-    if (typeof song.image === "string") {
-      return song.image;
-    }
-
-    return [];
-  };
-
-  /*
-   * Get audio URL
-   */
-  const getAudioUrl = (song) => {
-    if (!song) {
-      return null;
-    }
-
-    /*
-     * downloadUrl can be an array
-     */
-    if (Array.isArray(song.downloadUrl)) {
-      const validUrls = song.downloadUrl.filter(
-        (item) => item?.url
-      );
-
-      if (validUrls.length > 0) {
-        /*
-         * Usually the last item is highest quality.
-         */
-        return validUrls[validUrls.length - 1].url;
-      }
-    }
-
-    /*
-     * downloadUrl can be a string
-     */
-    if (typeof song.downloadUrl === "string") {
-      return song.downloadUrl;
-    }
-
-    /*
-     * Fallback audio property
-     */
-    if (typeof song.audio === "string") {
-      return song.audio;
-    }
-
-    /*
-     * Other possible audio properties
-     */
-    if (typeof song.url === "string") {
-      return song.url;
-    }
-
-    return null;
-  };
-
-  /*
-   * Play first song
-   */
-  const playFirstSong = () => {
-    if (!songs.length) {
-      console.warn("Playlist has no songs.");
-      return;
-    }
-
-    const firstSong = songs[0];
-
-    const audioSource = getAudioUrl(firstSong);
-
-    if (!audioSource) {
-      console.error(
-        "No playable audio URL found:",
-        firstSong
-      );
-
-      return;
-    }
-
-    try {
-      playMusic(
-        audioSource,
-        firstSong?.name || "Unknown Song",
-        firstSong?.duration || 0,
-        getSongImage(firstSong),
-        firstSong?.id,
-        firstSong?.artists || [],
-        songs
-      );
-    } catch (err) {
-      console.error(
-        "Error playing first song:",
-        err
-      );
-    }
-  };
-
-  /*
-   * Calculate total duration
-   */
-  const totalDuration = useMemo(() => {
-    if (!songs.length) {
-      return 0;
-    }
-
-    return songs.reduce((total, song) => {
-      const duration = Number(song?.duration) || 0;
-
-      return total + duration;
-    }, 0);
-  }, [songs]);
-
-  /*
-   * Format duration
-   */
-  const formatDuration = (duration) => {
-    const totalSeconds =
-      Number(duration) || 0;
-
-    if (totalSeconds <= 0) {
-      return "0m";
-    }
-
-    const hours = Math.floor(
-      totalSeconds / 3600
-    );
-
-    const minutes = Math.floor(
-      (totalSeconds % 3600) / 60
-    );
-
-    const seconds = Math.floor(
-      totalSeconds % 60
-    );
-
-    /*
-     * Hours
-     */
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-
-    /*
-     * Minutes
-     */
-    if (minutes > 0) {
-      return `${minutes}m`;
-    }
-
-    /*
-     * Seconds
-     */
-    return `${seconds}s`;
-  };
-
-  /*
-   * Song count
-   */
-  const songCount =
-    playlistData.songCount ??
-    songs.length;
 
   return (
     <>
       <Navbar />
 
-      <main className="flex flex-col mt-[11rem] lg:mt-[6rem] pb-10">
-
-        {/* =========================================
+      <main
+        className="
+          mt-[11rem]
+          flex
+          flex-col
+          pb-10
+          lg:mt-[6rem]
+        "
+      >
+        {/* =====================================
             PLAYLIST HEADER
-        ========================================== */}
+        ====================================== */}
+
         <section
           className="
             flex
-            items-center
-            lg:pl-[2rem]
-            lg:flex-row
             flex-col
-            gap-[1rem]
-            lg:gap-[2rem]
+            items-center
+            gap-4
+            lg:flex-row
+            lg:gap-8
+            lg:pl-8
           "
         >
-          {/* Playlist Image */}
+          {/* PLAYLIST IMAGE */}
+
           <img
             src={playlistImage}
             alt={
-              playlistData.name ||
+              playlistData?.name ||
+              playlistData?.title ||
               "Playlist"
             }
             className="
-              w-[10rem]
-              h-[10rem]
-              lg:w-[15rem]
-              lg:h-[15rem]
+              DetailImg
+              h-40
+              w-40
               rounded
               object-cover
-              DetailImg
+              lg:h-60
+              lg:w-60
             "
             onError={(event) => {
+              if (
+                event.currentTarget.src.includes(
+                  DEFAULT_IMAGE
+                )
+              ) {
+                return;
+              }
+
               event.currentTarget.src =
-                "/default-image.png";
+                DEFAULT_IMAGE;
             }}
           />
 
-          {/* Playlist Information */}
+          {/* PLAYLIST INFORMATION */}
+
           <div
             className="
               flex
               flex-col
-              gap-1
               items-center
+              gap-1
               text-center
             "
           >
-            {/* Playlist Name */}
             <h1
               className="
                 text-2xl
-                lg:text-3xl
                 font-bold
+                lg:text-3xl
               "
             >
-              {playlistData.name ||
+              {playlistData?.name ||
+                playlistData?.title ||
                 "Unknown Playlist"}
             </h1>
 
-            {/* Song Count */}
             <p
               className="
                 text-sm
-                lg:text-lg
                 font-semibold
+                lg:text-lg
               "
             >
-              Total Songs : {songCount}
+              Total Songs :{" "}
+              {songCount}
             </p>
 
-            {/* Duration */}
             <p
               className="
                 text-sm
-                lg:text-lg
                 font-semibold
+                lg:text-lg
               "
             >
               Total Duration :{" "}
@@ -488,45 +898,47 @@ const PlaylistDetails = () => {
               )}
             </p>
 
-            {/* Desktop Controls */}
+            {/* DESKTOP CONTROLS */}
+
             <div
               className="
-                hidden
-                lg:flex
                 mt-4
+                hidden
                 gap-4
+                lg:flex
               "
             >
-              {/* Play */}
+              {/* PLAY */}
+
               <button
                 type="button"
-                onClick={playFirstSong}
-                disabled={!songs.length}
+                onClick={
+                  playFirstSong
+                }
+                disabled={
+                  songs.length === 0
+                }
                 title="Play Playlist"
                 className="
                   flex
-                  justify-center
+                  h-12
+                  w-12
                   items-center
-                  h-[3rem]
-                  w-[3rem]
+                  justify-center
+                  rounded-full
                   border
                   border-[#8f8f8f6e]
-                  rounded-full
-                  cursor-pointer
-                  disabled:opacity-50
+                  transition
+                  hover:scale-105
                   disabled:cursor-not-allowed
+                  disabled:opacity-50
                 "
               >
-                <FaPlay
-                  className="
-                    text-xl
-                    icon
-                    active:scale-90
-                  "
-                />
+                <FaPlay className="text-xl" />
               </button>
 
-              {/* Like */}
+              {/* LIKE */}
+
               <button
                 type="button"
                 onClick={
@@ -538,40 +950,29 @@ const PlaylistDetails = () => {
                     : "Like Playlist"
                 }
                 className="
-                  mb-[1.4rem]
+                  flex
+                  h-12
+                  w-12
+                  items-center
+                  justify-center
+                  rounded-full
                   border
                   border-[#8f8f8f6e]
-                  h-[3rem]
-                  w-[3rem]
-                  flex
-                  justify-center
-                  items-center
-                  rounded-full
-                  cursor-pointer
+                  transition
+                  hover:scale-105
                 "
               >
                 {isLiked ? (
-                  <FaHeart
-                    className="
-                      text-red-500
-                      text-2xl
-                    "
-                  />
+                  <FaHeart className="text-2xl text-red-500" />
                 ) : (
-                  <FaRegHeart
-                    className="
-                      icon
-                      text-2xl
-                    "
-                  />
+                  <FaRegHeart className="text-2xl" />
                 )}
               </button>
             </div>
           </div>
 
-          {/* =====================================
-              MOBILE CONTROLS
-          ====================================== */}
+          {/* MOBILE CONTROLS */}
+
           <div
             className="
               flex
@@ -579,7 +980,8 @@ const PlaylistDetails = () => {
               lg:hidden
             "
           >
-            {/* Like */}
+            {/* LIKE */}
+
             <button
               type="button"
               onClick={
@@ -591,78 +993,68 @@ const PlaylistDetails = () => {
                   : "Like Playlist"
               }
               className="
-                mb-[1.4rem]
+                flex
+                h-12
+                w-12
+                items-center
+                justify-center
+                rounded-full
                 border
                 border-[#8f8f8f6e]
-                h-[3rem]
-                w-[3rem]
-                flex
-                justify-center
-                items-center
-                rounded-full
-                cursor-pointer
+                transition
+                hover:scale-105
               "
             >
               {isLiked ? (
-                <FaHeart
-                  className="
-                    text-red-500
-                    text-2xl
-                  "
-                />
+                <FaHeart className="text-2xl text-red-500" />
               ) : (
-                <FaRegHeart
-                  className="
-                    icon
-                    text-2xl
-                  "
-                />
+                <FaRegHeart className="text-2xl" />
               )}
             </button>
 
-            {/* Play */}
+            {/* PLAY */}
+
             <button
               type="button"
-              onClick={playFirstSong}
-              disabled={!songs.length}
+              onClick={
+                playFirstSong
+              }
+              disabled={
+                songs.length === 0
+              }
               title="Play Playlist"
               className="
                 flex
-                justify-center
+                h-12
+                w-12
                 items-center
-                h-[3rem]
-                w-[3rem]
+                justify-center
+                rounded-full
                 border
                 border-[#8f8f8f6e]
-                rounded-full
-                cursor-pointer
-                disabled:opacity-50
+                transition
+                hover:scale-105
                 disabled:cursor-not-allowed
+                disabled:opacity-50
               "
             >
-              <FaPlay
-                className="
-                  text-xl
-                  icon
-                  active:scale-90
-                "
-              />
+              <FaPlay className="text-xl" />
             </button>
           </div>
         </section>
 
-        {/* =========================================
+        {/* =====================================
             SONG LIST
-        ========================================== */}
-        <section>
+        ====================================== */}
+
+        <section className="mt-4">
           <h2
             className="
-              lg:mt-8
-              mt-2
               mb-2
               ml-2
               text-2xl
               font-semibold
+              lg:mt-8
             "
           >
             Top Songs
@@ -670,23 +1062,64 @@ const PlaylistDetails = () => {
 
           <div className="flex flex-col">
             {songs.length > 0 ? (
-              songs.map((song, index) => (
-                <SongsList
-                  key={
-                    song?.id ||
-                    `song-${index}`
-                  }
-                  {...song}
-                  song={songs}
-                />
-              ))
+              songs.map(
+                (song, index) => (
+                  <SongsList
+                    key={
+                      song?.id ||
+                      song?.songId ||
+                      `song-${index}`
+                    }
+
+                    /*
+                     * Spread song properties.
+                     */
+
+                    {...song}
+
+                    /*
+                     * IMPORTANT:
+                     * This must be the CURRENT song.
+                     *
+                     * Do NOT use:
+                     *
+                     * song={songs}
+                     */
+
+                    song={song}
+
+                    /*
+                     * Complete playlist.
+                     */
+
+                    songs={songs}
+
+                    /*
+                     * Current index.
+                     */
+
+                    index={index}
+
+                    /*
+                     * Direct play callback.
+                     */
+
+                    onPlay={() =>
+                      playSong(
+                        song,
+                        index
+                      )
+                    }
+                  />
+                )
+              )
             ) : (
               <p
                 className="
-                  text-center
-                  text-gray-500
                   w-full
                   py-8
+                  text-center
+                  text-gray-500
                 "
               >
                 Playlist is Empty......
@@ -696,10 +1129,12 @@ const PlaylistDetails = () => {
         </section>
       </main>
 
-      {/* Navigation */}
+      {/* NAVIGATION */}
+
       <Navigator />
 
-      {/* Footer */}
+      {/* FOOTER */}
+
       <Footer />
     </>
   );
