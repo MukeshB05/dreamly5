@@ -155,12 +155,18 @@ const Player = () => {
 
 
   const duration = useMemo(() => {
-    const value = Number(currentSong?.duration);
+    const apiDuration = Number(currentSong?.duration);
 
-    return Number.isFinite(value) && value > 0
-      ? value
+    if (Number.isFinite(apiDuration) && apiDuration > 0) {
+      return apiDuration;
+    }
+
+    const audioDuration = Number(currentSong?.audio?.duration);
+
+    return Number.isFinite(audioDuration) && audioDuration > 0
+      ? audioDuration
       : 0;
-  }, [currentSong?.duration]);
+  }, [currentSong?.duration, currentSong?.audio?.duration]);
 
 
   const progress = useMemo(() => {
@@ -257,10 +263,12 @@ const Player = () => {
   // =========================================================
 
   useEffect(() => {
+    setCurrentTime(0);
+
     if (!currentSong) {
       setIsMaximized(false);
     }
-  }, [currentSong]);
+  }, [currentSong?.id]);
 
 
   // =========================================================
@@ -307,47 +315,49 @@ const Player = () => {
     };
 
 
-    const handleEnded = () => {
-      if (!currentSong?.id) {
-        return;
+    const updateDuration = () => {
+      const audioDuration = Number(audio.duration);
+
+      if (
+        Number.isFinite(audioDuration) &&
+        audioDuration > 0 &&
+        (!Number.isFinite(Number(currentSong?.duration)) ||
+          Number(currentSong?.duration) <= 0)
+      ) {
+        // The progress UI uses audio.duration when the API does not provide one.
+        setCurrentTime((previous) =>
+          Math.min(previous, audioDuration)
+        );
       }
 
-      if (repeatMode === "one") {
+      updateTime();
+    };
+
+    const handleEnded = () => {
+      if (!currentSong?.id || repeatMode === "one") {
         return;
       }
 
       nextSong();
     };
 
+    audio.addEventListener("loadedmetadata", updateDuration);
+    audio.addEventListener("durationchange", updateDuration);
+    audio.addEventListener("timeupdate", updateTime);
+    audio.addEventListener("ended", handleEnded);
 
-    audio.addEventListener(
-      "timeupdate",
-      updateTime
-    );
-
-    audio.addEventListener(
-      "ended",
-      handleEnded
-    );
-
-
-    updateTime();
-
+    updateDuration();
 
     return () => {
-      audio.removeEventListener(
-        "timeupdate",
-        updateTime
-      );
-
-      audio.removeEventListener(
-        "ended",
-        handleEnded
-      );
+      audio.removeEventListener("loadedmetadata", updateDuration);
+      audio.removeEventListener("durationchange", updateDuration);
+      audio.removeEventListener("timeupdate", updateTime);
+      audio.removeEventListener("ended", handleEnded);
     };
   }, [
     currentSong?.audio,
     currentSong?.id,
+    currentSong?.duration,
     duration,
     nextSong,
     repeatMode,
@@ -440,10 +450,14 @@ const Player = () => {
 
     setVolume(safeVolume);
 
-    localStorage.setItem(
-      "volume",
-      String(safeVolume)
-    );
+    try {
+      localStorage.setItem(
+        "volume",
+        String(safeVolume)
+      );
+    } catch (error) {
+      console.error("Failed to save volume:", error);
+    }
 
 
     if (currentSong?.audio) {
@@ -1461,6 +1475,9 @@ const Player = () => {
                     shadow-2xl
                     profile
                   "
+                  onError={(event) => {
+                    event.currentTarget.src = "/Unknown.png";
+                  }}
                 />
               </div>
 
