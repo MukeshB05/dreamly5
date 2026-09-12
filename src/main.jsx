@@ -1,14 +1,11 @@
-import React from "react";
+// main.jsx or index.jsx
+import { Analytics } from "@vercel/analytics/react"
 import ReactDOM from "react-dom/client";
-import App from "./App";
-import { MusicProvider } from "./context/MusicContext";
+import App from "./App"; // Ensure the path is correct
+import "./index.css"; // Add styles if required
 
-ReactDOM.createRoot(
-  document.getElementById("root")
-).render(
-  <React.StrictMode>
-    <MusicProvider>
-      <App />
-    </MusicProvider>
-  </React.StrictMode>
+ReactDOM.createRoot(document.getElementById("root")).render(
+
+    <App  />
+    
 );
