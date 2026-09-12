@@ -1,2115 +1,2424 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import {
-  IoIosClose,
-  IoMdSkipBackward,
-  IoMdSkipForward,
-} from "react-icons/io";
+const MusicContext = createContext(null);
 
-import { IoShareSocial } from "react-icons/io5";
+const LRCLIB_BASE_URL = "https://lrclib.net/api";
 
-import {
-  PiShuffleBold,
-  PiSpeakerLowFill,
-} from "react-icons/pi";
+/* =========================================================
+   HELPERS
+========================================================= */
 
-import {
-  LuRepeat,
-  LuRepeat1,
-} from "react-icons/lu";
-
-import {
-  FaPlay,
-  FaPause,
-  FaHeart,
-  FaRegHeart,
-} from "react-icons/fa";
-
-import {
-  MdDownload,
-  MdOutlineKeyboardArrowLeft,
-  MdOutlineKeyboardArrowRight,
-} from "react-icons/md";
-
-import { CiMaximize1 } from "react-icons/ci";
-
-import { Link } from "react-router-dom";
-
-import MusicContext from "../context/MusicContext";
-import ArtistItems from "./Items/ArtistItems";
-import SongGrid from "./SongGrid";
-
-import {
-  getSongById,
-  getSuggestionSong,
-} from "../../fetch";
-
-import he from "he";
-
-
-const Player = () => {
-  const {
-    currentSong,
-    song,
-    playMusic,
-    isPlaying,
-    shuffle,
-    nextSong,
-    prevSong,
-    toggleShuffle,
-    repeatMode,
-    toggleRepeatMode,
-    downloadSong,
-  } = useContext(MusicContext);
-
-
-  // =========================================================
-  // STATE
-  // =========================================================
-
-  const [volume, setVolume] = useState(() => {
-    try {
-      const savedVolume = localStorage.getItem("volume");
-
-      if (savedVolume === null) {
-        return 100;
-      }
-
-      const value = Number(savedVolume);
-
-      if (!Number.isFinite(value)) {
-        return 100;
-      }
-
-      return Math.min(100, Math.max(0, value));
-    } catch (error) {
-      console.error("Volume load error:", error);
-      return 100;
+const getFirstValue = (...values) => {
+  for (const value of values) {
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      return value;
     }
-  });
+  }
 
+  return "";
+};
 
-  const [isMaximized, setIsMaximized] = useState(false);
+const cleanText = (value = "") => {
+  return String(value)
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
 
-  const [currentTime, setCurrentTime] = useState(0);
+const getArtist = (track = {}) => {
+  if (typeof track.artist === "string") {
+    return track.artist;
+  }
 
-  const [detail, setDetail] = useState(null);
+  if (typeof track.artists === "string") {
+    return track.artists;
+  }
 
-  const [suggestions, setSuggestions] = useState([]);
+  if (Array.isArray(track.artists)) {
+    return track.artists
+      .map((artist) => {
+        if (typeof artist === "string") {
+          return artist;
+        }
 
-  const [likedSongs, setLikedSongs] = useState(() => {
-    try {
-      const saved = localStorage.getItem("likedSongs");
-
-      if (!saved) {
-        return [];
-      }
-
-      const parsed = JSON.parse(saved);
-
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.error("Liked songs load error:", error);
-      return [];
-    }
-  });
-
-
-  // =========================================================
-  // REFS
-  // =========================================================
-
-  const progressRef = useRef(null);
-
-  const scrollRef = useRef(null);
-
-
-  // =========================================================
-  // CURRENT SONG VALUES
-  // =========================================================
-
-  const songName = useMemo(() => {
-    if (!currentSong?.name) {
-      return "Unknown Title";
-    }
-
-    try {
-      return he.decode(String(currentSong.name));
-    } catch {
-      return String(currentSong.name);
-    }
-  }, [currentSong?.name]);
-
-
-  const artistNames = useMemo(() => {
-    const artists = currentSong?.artists?.primary;
-
-    if (!Array.isArray(artists) || artists.length === 0) {
-      return "Unknown Artist";
-    }
-
-    return artists
-      .map((artist) => artist?.name || "Unknown Artist")
+        return artist?.name || "";
+      })
+      .filter(Boolean)
       .join(", ");
-  }, [currentSong?.artists]);
+  }
 
+  if (
+    Array.isArray(
+      track.artists?.primary
+    )
+  ) {
+    return track.artists.primary
+      .map((artist) => artist?.name || "")
+      .filter(Boolean)
+      .join(", ");
+  }
 
-  const duration = useMemo(() => {
-    const apiDuration = Number(currentSong?.duration);
+  if (
+    Array.isArray(
+      track.artists?.all
+    )
+  ) {
+    return track.artists.all
+      .map((artist) => artist?.name || "")
+      .filter(Boolean)
+      .join(", ");
+  }
 
-    if (Number.isFinite(apiDuration) && apiDuration > 0) {
-      return apiDuration;
+  return getFirstValue(
+    track.primaryArtists,
+    track.primary_artists,
+    track.singers,
+    track.subtitle,
+    "Unknown Artist"
+  );
+};
+
+const getImage = (track = {}) => {
+  const image = getFirstValue(
+    track.image,
+    track.coverImage,
+    track.cover_image,
+    track.thumbnail,
+    track.thumbnailUrl,
+    track.imageUrl,
+    track.image_url,
+    track.album?.image,
+    track.album?.cover,
+    track.album?.coverImage
+  );
+
+  if (Array.isArray(image)) {
+    const last =
+      image[image.length - 1];
+
+    if (typeof last === "string") {
+      return last;
     }
 
-    const audioDuration = Number(currentSong?.audio?.duration);
-
-    return Number.isFinite(audioDuration) && audioDuration > 0
-      ? audioDuration
-      : 0;
-  }, [currentSong?.duration, currentSong?.audio?.duration]);
-
-
-  const progress = useMemo(() => {
-    if (duration <= 0) {
-      return 0;
-    }
-
-    const value = (currentTime / duration) * 100;
-
-    return Math.min(100, Math.max(0, value));
-  }, [currentTime, duration]);
-
-
-  const isLiked = useMemo(() => {
-    if (!currentSong?.id) {
-      return false;
-    }
-
-    return likedSongs.some(
-      (item) => item?.id === currentSong.id
+    return (
+      last?.url ||
+      last?.link ||
+      ""
     );
-  }, [likedSongs, currentSong?.id]);
+  }
 
+  if (
+    typeof image === "object" &&
+    image !== null
+  ) {
+    return (
+      image.url ||
+      image.link ||
+      image.src ||
+      ""
+    );
+  }
 
-  // =========================================================
-  // THEME
-  // =========================================================
+  return image || "";
+};
 
-  const theme =
-    typeof document !== "undefined"
-      ? document.documentElement.getAttribute("data-theme")
-      : "light";
+const getAudioUrl = (track = {}) => {
+  const value = getFirstValue(
+    track.audio,
+    track.audioUrl,
+    track.audio_url,
+    track.downloadUrl,
+    track.download_url,
+    track.url,
+    track.mediaUrl,
+    track.media_url,
+    track.streamUrl,
+    track.stream_url
+  );
 
+  if (Array.isArray(value)) {
+    const last =
+      value[value.length - 1];
 
-  // =========================================================
-  // PLAY / PAUSE
-  // =========================================================
+    if (typeof last === "string") {
+      return last;
+    }
 
-  const handlePlayPause = () => {
-    if (!currentSong) {
+    return (
+      last?.url ||
+      last?.link ||
+      last?.downloadUrl ||
+      ""
+    );
+  }
+
+  if (
+    typeof value === "object" &&
+    value !== null
+  ) {
+    return (
+      value.url ||
+      value.link ||
+      value.downloadUrl ||
+      ""
+    );
+  }
+
+  return value || "";
+};
+
+const getDuration = (track = {}) => {
+  const value = Number(
+    getFirstValue(
+      track.duration,
+      track.durationSeconds,
+      track.duration_seconds,
+      track.durationMs
+    )
+  );
+
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  /*
+   * If API returns milliseconds,
+   * convert to seconds.
+   */
+  if (value > 10000) {
+    return value / 1000;
+  }
+
+  return value;
+};
+
+const getSongId = (track = {}) => {
+  return getFirstValue(
+    track.id,
+    track.songId,
+    track.song_id,
+    track.trackId,
+    track.track_id,
+    track.perma_url,
+    track.url,
+    `${track.name || track.title || "song"}-${getArtist(
+      track
+    )}`
+  );
+};
+
+/* =========================================================
+   NORMALIZE SONG
+========================================================= */
+
+const normalizeSong = (track) => {
+  if (!track) {
+    return null;
+  }
+
+  const name = getFirstValue(
+    track.name,
+    track.title,
+    track.song,
+    track.trackName,
+    track.track_name,
+    "Unknown Song"
+  );
+
+  const artist = getArtist(track);
+
+  const image = getImage(track);
+
+  const audio = getAudioUrl(track);
+
+  const duration =
+    getDuration(track);
+
+  const id = getSongId(track);
+
+  return {
+    ...track,
+
+    id,
+
+    name,
+    title: name,
+
+    artist,
+
+    image,
+    coverImage: image,
+
+    audio,
+    audioUrl: audio,
+
+    duration,
+
+    durationSeconds: duration,
+
+    album:
+      track.album || {
+        name:
+          track.albumName ||
+          "",
+        image,
+      },
+  };
+};
+
+/* =========================================================
+   QUEUE
+========================================================= */
+
+const normalizeQueue = (value) => {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeSong)
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(value.songs)) {
+    return value.songs
+      .map(normalizeSong)
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(value.data)) {
+    return value.data
+      .map(normalizeSong)
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(value.results)) {
+    return value.results
+      .map(normalizeSong)
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(value.tracks)) {
+    return value.tracks
+      .map(normalizeSong)
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+/* =========================================================
+   LRC PARSER
+========================================================= */
+
+export const parseLrc = (
+  lrcText
+) => {
+  if (
+    !lrcText ||
+    typeof lrcText !== "string"
+  ) {
+    return [];
+  }
+
+  const result = [];
+
+  const lines =
+    lrcText.split(/\r?\n/);
+
+  /*
+   * Supports:
+   * [00:12.34]
+   * [00:12.3]
+   * [00:12.345]
+   * [00:12:34]
+   */
+
+  const timeRegex =
+    /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+
+  lines.forEach((line) => {
+    const matches = [
+      ...line.matchAll(timeRegex),
+    ];
+
+    if (!matches.length) {
       return;
     }
 
-    const audio = currentSong?.audio;
+    const text = line
+      .replace(timeRegex, "")
+      .trim();
 
-    const audioUrl =
-      audio?.currentSrc ||
-      audio?.src ||
-      currentSong?.url ||
-      currentSong?.downloadUrl ||
-      "";
-
-    if (!audioUrl) {
-      console.error("Audio URL not found.");
+    if (!text) {
       return;
     }
 
-    playMusic(
-      audioUrl,
-      currentSong.name,
-      currentSong.duration,
-      currentSong.image,
-      currentSong.id,
-      song
-    );
-  };
+    matches.forEach((match) => {
+      const minutes =
+        Number(match[1]) || 0;
 
+      const seconds =
+        Number(match[2]) || 0;
 
-  // =========================================================
-  // FORMAT TIME
-  // =========================================================
+      let milliseconds = 0;
 
-  const formatTime = (time) => {
-    const value = Number(time);
+      if (match[3]) {
+        const fraction =
+          String(match[3]);
 
-    if (!Number.isFinite(value) || value < 0) {
-      return "00:00";
-    }
-
-    const minutes = Math.floor(value / 60)
-      .toString()
-      .padStart(2, "0");
-
-    const seconds = Math.floor(value % 60)
-      .toString()
-      .padStart(2, "0");
-
-    return `${minutes}:${seconds}`;
-  };
-
-
-  // =========================================================
-  // PLAYER VISIBILITY
-  // =========================================================
-
-  useEffect(() => {
-    setCurrentTime(0);
-
-    if (!currentSong) {
-      setIsMaximized(false);
-    }
-  }, [currentSong?.id]);
-
-
-  // =========================================================
-  // AUDIO TIME UPDATE
-  // =========================================================
-
-  useEffect(() => {
-    const audio = currentSong?.audio;
-
-    if (!audio) {
-      setCurrentTime(0);
-      return undefined;
-    }
-
-
-    const updateTime = () => {
-      const time = Number(audio.currentTime);
-
-      const safeTime =
-        Number.isFinite(time) && time >= 0
-          ? time
-          : 0;
-
-      setCurrentTime(safeTime);
-
-
-      if (progressRef.current && duration > 0) {
-        const percentage =
-          (safeTime / duration) * 100;
-
-        const safePercentage = Math.min(
-          100,
-          Math.max(0, percentage)
-        );
-
-        progressRef.current.value =
-          safePercentage;
-
-        progressRef.current.style.setProperty(
-          "--progress",
-          `${safePercentage}%`
-        );
+        if (fraction.length === 1) {
+          milliseconds =
+            Number(fraction) * 100;
+        } else if (
+          fraction.length === 2
+        ) {
+          milliseconds =
+            Number(fraction) * 10;
+        } else {
+          milliseconds =
+            Number(
+              fraction.slice(0, 3)
+            );
+        }
       }
-    };
 
+      const time =
+        minutes * 60 +
+        seconds +
+        milliseconds / 1000;
 
-    const updateDuration = () => {
-      const audioDuration = Number(audio.duration);
+      result.push({
+        time,
+        text,
+      });
+    });
+  });
+
+  return result.sort(
+    (a, b) =>
+      a.time - b.time
+  );
+};
+
+/* =========================================================
+   LRCLIB
+========================================================= */
+
+export const fetchSyncedLyrics =
+  async (
+    trackName,
+    artistName,
+    duration
+  ) => {
+    const cleanTrack =
+      cleanText(trackName);
+
+    const cleanArtist =
+      cleanText(
+        String(
+          artistName || ""
+        ).split(",")[0]
+      );
+
+    if (!cleanTrack) {
+      return {
+        synced: false,
+        lines: [],
+        plain: "",
+      };
+    }
+
+    try {
+      /*
+       * -----------------------------------------
+       * DIRECT SEARCH
+       * -----------------------------------------
+       */
+
+      let url =
+        `${LRCLIB_BASE_URL}/get` +
+        `?track_name=${encodeURIComponent(
+          cleanTrack
+        )}` +
+        `&artist_name=${encodeURIComponent(
+          cleanArtist
+        )}`;
 
       if (
-        Number.isFinite(audioDuration) &&
-        audioDuration > 0 &&
-        (!Number.isFinite(Number(currentSong?.duration)) ||
-          Number(currentSong?.duration) <= 0)
+        duration &&
+        Number(duration) > 0
       ) {
-        // The progress UI uses audio.duration when the API does not provide one.
-        setCurrentTime((previous) =>
-          Math.min(previous, audioDuration)
-        );
+        url +=
+          `&duration=${Math.round(
+            Number(duration)
+          )}`;
       }
 
-      updateTime();
+      let response =
+        await fetch(url);
+
+      if (response.ok) {
+        const data =
+          await response.json();
+
+        if (data?.syncedLyrics) {
+          const lines =
+            parseLrc(
+              data.syncedLyrics
+            );
+
+          return {
+            synced: true,
+            lines,
+            plain:
+              data.plainLyrics ||
+              lines
+                .map(
+                  (line) =>
+                    line.text
+                )
+                .join("\n"),
+            source: "lrclib",
+          };
+        }
+
+        if (data?.plainLyrics) {
+          const plain =
+            data.plainLyrics;
+
+          return {
+            synced: false,
+
+            lines: plain
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .map((text) => ({
+                time: 0,
+                text,
+              })),
+
+            plain,
+
+            source: "lrclib",
+          };
+        }
+      }
+
+      /*
+       * -----------------------------------------
+       * LRCLIB SEARCH FALLBACK
+       * -----------------------------------------
+       */
+
+      const searchUrl =
+        `${LRCLIB_BASE_URL}/search` +
+        `?q=${encodeURIComponent(
+          `${cleanTrack} ${cleanArtist}`
+        )}`;
+
+      response =
+        await fetch(searchUrl);
+
+      if (response.ok) {
+        const results =
+          await response.json();
+
+        if (
+          Array.isArray(results) &&
+          results.length
+        ) {
+          /*
+           * Prefer synced lyrics.
+           */
+
+          const syncedResult =
+            results.find(
+              (item) =>
+                item?.syncedLyrics
+            );
+
+          if (
+            syncedResult?.syncedLyrics
+          ) {
+            const lines =
+              parseLrc(
+                syncedResult.syncedLyrics
+              );
+
+            return {
+              synced: true,
+              lines,
+              plain:
+                syncedResult.plainLyrics ||
+                lines
+                  .map(
+                    (line) =>
+                      line.text
+                  )
+                  .join("\n"),
+              source: "lrclib",
+            };
+          }
+
+          /*
+           * Otherwise use plain lyrics.
+           */
+
+          const plainResult =
+            results.find(
+              (item) =>
+                item?.plainLyrics
+            );
+
+          if (
+            plainResult?.plainLyrics
+          ) {
+            const plain =
+              plainResult.plainLyrics;
+
+            return {
+              synced: false,
+
+              lines: plain
+                .split(/\r?\n/)
+                .filter(Boolean)
+                .map(
+                  (text) => ({
+                    time: 0,
+                    text,
+                  })
+                ),
+
+              plain,
+
+              source: "lrclib",
+            };
+          }
+        }
+      }
+
+      return {
+        synced: false,
+        lines: [],
+        plain:
+          "No lyrics available for this song.",
+        source: "lrclib",
+      };
+    } catch (error) {
+      console.error(
+        "LRCLIB error:",
+        error
+      );
+
+      return {
+        synced: false,
+        lines: [],
+        plain:
+          "Could not load lyrics.",
+        source: "lrclib",
+      };
+    }
+  };
+
+/* =========================================================
+   PROVIDER
+========================================================= */
+
+export const MusicProvider = ({
+  children,
+}) => {
+  const audioRef =
+    useRef(null);
+
+  const lyricsRequestRef =
+    useRef(0);
+
+  /*
+   * -----------------------------------------
+   * PLAYER STATE
+   * -----------------------------------------
+   */
+
+  const [currentSong, setCurrentSong] =
+    useState(null);
+
+  const [song, setSong] =
+    useState([]);
+
+  const [currentIndex, setCurrentIndex] =
+    useState(-1);
+
+  const [isPlaying, setIsPlaying] =
+    useState(false);
+
+  const [shuffle, setShuffle] =
+    useState(false);
+
+  const [repeatMode, setRepeatMode] =
+    useState("off");
+
+  /*
+   * -----------------------------------------
+   * PROGRESS
+   * -----------------------------------------
+   */
+
+  const [currentTime, setCurrentTime] =
+    useState(0);
+
+  const [duration, setDuration] =
+    useState(0);
+
+  /*
+   * -----------------------------------------
+   * VOLUME
+   * -----------------------------------------
+   */
+
+  const [volume, setVolume] =
+    useState(() => {
+      try {
+        const saved =
+          localStorage.getItem(
+            "dreamly-volume"
+          );
+
+        if (saved !== null) {
+          const value =
+            Number(saved);
+
+          if (
+            Number.isFinite(
+              value
+            )
+          ) {
+            return Math.max(
+              0,
+              Math.min(
+                1,
+                value
+              )
+            );
+          }
+        }
+      } catch {
+        // Ignore
+      }
+
+      return 1;
+    });
+
+  /*
+   * -----------------------------------------
+   * COVER
+   * -----------------------------------------
+   */
+
+  const [coverImage, setCoverImage] =
+    useState("");
+
+  /*
+   * -----------------------------------------
+   * LYRICS
+   * -----------------------------------------
+   */
+
+  const [lyrics, setLyrics] =
+    useState([]);
+
+  const [lyricsText, setLyricsText] =
+    useState("");
+
+  const [lyricsSynced, setLyricsSynced] =
+    useState(false);
+
+  const [lyricsLoading, setLyricsLoading] =
+    useState(false);
+
+  const [lyricsError, setLyricsError] =
+    useState("");
+
+  const [activeLyricIndex, setActiveLyricIndex] =
+    useState(-1);
+
+  /*
+   * -----------------------------------------
+   * LIKES
+   * -----------------------------------------
+   */
+
+  const [likedSongs, setLikedSongs] =
+    useState(() => {
+      try {
+        const saved =
+          localStorage.getItem(
+            "dreamly-liked-songs"
+          );
+
+        if (saved) {
+          const parsed =
+            JSON.parse(saved);
+
+          return Array.isArray(
+            parsed
+          )
+            ? parsed
+            : [];
+        }
+      } catch {
+        // Ignore
+      }
+
+      return [];
+    });
+
+  /* =========================================================
+     CREATE AUDIO
+  ========================================================= */
+
+  useEffect(() => {
+    const audio =
+      new Audio();
+
+    audio.preload =
+      "metadata";
+
+    audio.volume =
+      volume;
+
+    audioRef.current =
+      audio;
+
+    return () => {
+      audio.pause();
+      audio.src = "";
+      audioRef.current =
+        null;
+    };
+  }, []);
+
+  /* =========================================================
+     AUDIO EVENTS
+  ========================================================= */
+
+  const nextSongRef =
+    useRef(null);
+
+  const playSongRef =
+    useRef(null);
+
+  const repeatModeRef =
+    useRef(repeatMode);
+
+  useEffect(() => {
+    repeatModeRef.current =
+      repeatMode;
+  }, [repeatMode]);
+
+  /* =========================================================
+     LOAD SONG
+  ========================================================= */
+
+  const loadSong = useCallback(
+    async (
+      selectedSong,
+      autoPlay = true
+    ) => {
+      const normalized =
+        normalizeSong(
+          selectedSong
+        );
+
+      if (!normalized) {
+        return;
+      }
+
+      const audio =
+        audioRef.current;
+
+      if (!audio) {
+        return;
+      }
+
+      setCurrentSong(
+        normalized
+      );
+
+      setCoverImage(
+        normalized.image || ""
+      );
+
+      setCurrentTime(0);
+
+      setDuration(
+        Number(
+          normalized.duration
+        ) || 0
+      );
+
+      audio.pause();
+
+      audio.currentTime = 0;
+
+      audio.src =
+        normalized.audio || "";
+
+      audio.load();
+
+      if (!normalized.audio) {
+        setIsPlaying(false);
+
+        console.warn(
+          "Song has no audio URL:",
+          normalized
+        );
+
+        return;
+      }
+
+      if (autoPlay) {
+        try {
+          await audio.play();
+
+          setIsPlaying(true);
+        } catch (error) {
+          console.warn(
+            "Audio play failed:",
+            error
+          );
+
+          setIsPlaying(false);
+        }
+      }
+    },
+    []
+  );
+
+  /* =========================================================
+     PLAY MUSIC
+     
+     Compatible with:
+     
+     playMusic(
+       audioUrl,
+       name,
+       duration,
+       image,
+       id,
+       song
+     )
+  ========================================================= */
+
+  const playMusic =
+    useCallback(
+      async (
+        audioUrl,
+        name,
+        songDuration,
+        image,
+        id,
+        queue
+      ) => {
+        let selectedSong;
+
+        /*
+         * Complete object:
+         *
+         * playMusic(songObject)
+         */
+
+        if (
+          typeof audioUrl ===
+            "object" &&
+          audioUrl !== null
+        ) {
+          selectedSong =
+            normalizeSong(
+              audioUrl
+            );
+
+          if (
+            Array.isArray(name)
+          ) {
+            queue = name;
+          }
+        } else {
+          /*
+           * Existing Player format:
+           *
+           * playMusic(
+           *   audioUrl,
+           *   name,
+           *   duration,
+           *   image,
+           *   id,
+           *   song
+           * )
+           */
+
+          selectedSong =
+            normalizeSong({
+              audio: audioUrl,
+              name,
+              duration:
+                songDuration,
+              image,
+              id,
+            });
+        }
+
+        if (!selectedSong) {
+          return;
+        }
+
+        /*
+         * Update queue if provided.
+         */
+
+        const newQueue =
+          normalizeQueue(queue);
+
+        if (newQueue.length) {
+          setSong(newQueue);
+
+          const foundIndex =
+            newQueue.findIndex(
+              (item) =>
+                String(
+                  item.id
+                ) ===
+                String(
+                  selectedSong.id
+                )
+            );
+
+          setCurrentIndex(
+            foundIndex >= 0
+              ? foundIndex
+              : 0
+          );
+        } else {
+          /*
+           * If there is no queue,
+           * create one containing
+           * the current song.
+           */
+
+          setSong(
+            (previous) => {
+              const exists =
+                previous.some(
+                  (item) =>
+                    String(
+                      item.id
+                    ) ===
+                    String(
+                      selectedSong.id
+                    )
+                );
+
+              if (exists) {
+                return previous;
+              }
+
+              return [
+                ...previous,
+                selectedSong,
+              ];
+            }
+          );
+
+          setCurrentIndex(
+            (previous) => {
+              if (
+                previous >= 0
+              ) {
+                return previous;
+              }
+
+              return 0;
+            }
+          );
+        }
+
+        /*
+         * If same song is already loaded,
+         * toggle play/pause.
+         */
+
+        if (
+          currentSong &&
+          String(
+            currentSong.id
+          ) ===
+            String(
+              selectedSong.id
+            ) &&
+          audioRef.current?.src
+        ) {
+          if (
+            isPlaying
+          ) {
+            audioRef.current.pause();
+          } else {
+            try {
+              await audioRef.current.play();
+
+              setIsPlaying(
+                true
+              );
+            } catch (error) {
+              console.error(
+                "Play error:",
+                error
+              );
+            }
+          }
+
+          return;
+        }
+
+        await loadSong(
+          selectedSong,
+          true
+        );
+      },
+      [
+        currentSong,
+        isPlaying,
+        loadSong,
+      ]
+    );
+
+  playSongRef.current =
+    playMusic;
+
+  /* =========================================================
+     PAUSE
+  ========================================================= */
+
+  const pauseMusic =
+    useCallback(() => {
+      const audio =
+        audioRef.current;
+
+      if (!audio) {
+        return;
+      }
+
+      audio.pause();
+
+      setIsPlaying(false);
+    }, []);
+
+  /* =========================================================
+     RESUME
+  ========================================================= */
+
+  const resumeMusic =
+    useCallback(
+      async () => {
+        const audio =
+          audioRef.current;
+
+        if (!audio) {
+          return;
+        }
+
+        if (!audio.src) {
+          return;
+        }
+
+        try {
+          await audio.play();
+
+          setIsPlaying(true);
+        } catch (error) {
+          console.error(
+            "Resume error:",
+            error
+          );
+
+          setIsPlaying(false);
+        }
+      },
+      []
+    );
+
+  /* =========================================================
+     NEXT SONG
+  ========================================================= */
+
+  const nextSong =
+    useCallback(
+      async () => {
+        if (!song.length) {
+          return;
+        }
+
+        let nextIndex;
+
+        /*
+         * Shuffle
+         */
+
+        if (shuffle) {
+          if (
+            song.length === 1
+          ) {
+            nextIndex =
+              currentIndex;
+          } else {
+            do {
+              nextIndex =
+                Math.floor(
+                  Math.random() *
+                    song.length
+                );
+            } while (
+              nextIndex ===
+              currentIndex
+            );
+          }
+        } else {
+          nextIndex =
+            currentIndex + 1;
+
+          if (
+            nextIndex >=
+            song.length
+          ) {
+            if (
+              repeatMode ===
+              "all"
+            ) {
+              nextIndex = 0;
+            } else {
+              setIsPlaying(
+                false
+              );
+
+              return;
+            }
+          }
+        }
+
+        const next =
+          song[nextIndex];
+
+        if (!next) {
+          return;
+        }
+
+        setCurrentIndex(
+          nextIndex
+        );
+
+        await loadSong(
+          next,
+          true
+        );
+      },
+      [
+        song,
+        shuffle,
+        currentIndex,
+        repeatMode,
+        loadSong,
+      ]
+    );
+
+  nextSongRef.current =
+    nextSong;
+
+  /* =========================================================
+     PREVIOUS SONG
+  ========================================================= */
+
+  const prevSong =
+    useCallback(
+      async () => {
+        if (!song.length) {
+          return;
+        }
+
+        const audio =
+          audioRef.current;
+
+        /*
+         * If current song has played
+         * more than 3 seconds,
+         * restart it.
+         */
+
+        if (
+          audio &&
+          audio.currentTime >
+            3
+        ) {
+          audio.currentTime = 0;
+
+          setCurrentTime(0);
+
+          return;
+        }
+
+        let previousIndex =
+          currentIndex - 1;
+
+        if (
+          previousIndex < 0
+        ) {
+          if (
+            repeatMode ===
+            "all"
+          ) {
+            previousIndex =
+              song.length - 1;
+          } else {
+            previousIndex = 0;
+          }
+        }
+
+        const previous =
+          song[previousIndex];
+
+        if (!previous) {
+          return;
+        }
+
+        setCurrentIndex(
+          previousIndex
+        );
+
+        await loadSong(
+          previous,
+          true
+        );
+      },
+      [
+        song,
+        currentIndex,
+        repeatMode,
+        loadSong,
+      ]
+    );
+
+  /* =========================================================
+     AUDIO EVENT LISTENERS
+  ========================================================= */
+
+  useEffect(() => {
+    const audio =
+      audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    const handleLoadedMetadata =
+      () => {
+        if (
+          Number.isFinite(
+            audio.duration
+          ) &&
+          audio.duration > 0
+        ) {
+          setDuration(
+            audio.duration
+          );
+        }
+      };
+
+    const handleDurationChange =
+      () => {
+        if (
+          Number.isFinite(
+            audio.duration
+          ) &&
+          audio.duration > 0
+        ) {
+          setDuration(
+            audio.duration
+          );
+        }
+      };
+
+    const handleTimeUpdate =
+      () => {
+        setCurrentTime(
+          audio.currentTime || 0
+        );
+      };
+
+    const handlePlay = () => {
+      setIsPlaying(true);
+    };
+
+    const handlePause = () => {
+      setIsPlaying(false);
     };
 
     const handleEnded = () => {
-      if (!currentSong?.id || repeatMode === "one") {
+      setIsPlaying(false);
+
+      if (
+        repeatModeRef.current ===
+        "one"
+      ) {
+        audio.currentTime = 0;
+
+        audio
+          .play()
+          .then(() => {
+            setIsPlaying(
+              true
+            );
+          })
+          .catch((error) => {
+            console.error(
+              "Repeat-one error:",
+              error
+            );
+          });
+
         return;
       }
 
-      nextSong();
+      if (
+        nextSongRef.current
+      ) {
+        nextSongRef.current();
+      }
     };
 
-    audio.addEventListener("loadedmetadata", updateDuration);
-    audio.addEventListener("durationchange", updateDuration);
-    audio.addEventListener("timeupdate", updateTime);
-    audio.addEventListener("ended", handleEnded);
+    const handleError = (
+      event
+    ) => {
+      console.error(
+        "Audio error:",
+        event
+      );
 
-    updateDuration();
+      setIsPlaying(false);
+    };
+
+    audio.addEventListener(
+      "loadedmetadata",
+      handleLoadedMetadata
+    );
+
+    audio.addEventListener(
+      "durationchange",
+      handleDurationChange
+    );
+
+    audio.addEventListener(
+      "timeupdate",
+      handleTimeUpdate
+    );
+
+    audio.addEventListener(
+      "play",
+      handlePlay
+    );
+
+    audio.addEventListener(
+      "pause",
+      handlePause
+    );
+
+    audio.addEventListener(
+      "ended",
+      handleEnded
+    );
+
+    audio.addEventListener(
+      "error",
+      handleError
+    );
 
     return () => {
-      audio.removeEventListener("loadedmetadata", updateDuration);
-      audio.removeEventListener("durationchange", updateDuration);
-      audio.removeEventListener("timeupdate", updateTime);
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [
-    currentSong?.audio,
-    currentSong?.id,
-    currentSong?.duration,
-    duration,
-    nextSong,
-    repeatMode,
-  ]);
-
-
-  // =========================================================
-  // VOLUME
-  // =========================================================
-
-  useEffect(() => {
-    const audio = currentSong?.audio;
-
-    if (!audio) {
-      return;
-    }
-
-    audio.volume = volume / 100;
-  }, [
-    currentSong?.audio,
-    volume,
-  ]);
-
-
-  // =========================================================
-  // REPEAT MODE
-  // =========================================================
-
-  useEffect(() => {
-    const audio = currentSong?.audio;
-
-    if (!audio) {
-      return;
-    }
-
-    audio.loop = repeatMode === "one";
-  }, [
-    currentSong?.audio,
-    repeatMode,
-  ]);
-
-
-  // =========================================================
-  // PROGRESS CHANGE
-  // =========================================================
-
-  const handleProgressChange = (event) => {
-    const audio = currentSong?.audio;
-
-    if (!audio || duration <= 0) {
-      return;
-    }
-
-    const percentage =
-      Number(event.target.value);
-
-    if (!Number.isFinite(percentage)) {
-      return;
-    }
-
-    const newTime =
-      (percentage / 100) * duration;
-
-
-    audio.currentTime = Math.min(
-      duration,
-      Math.max(0, newTime)
-    );
-
-    setCurrentTime(audio.currentTime);
-  };
-
-
-  // =========================================================
-  // VOLUME CHANGE
-  // =========================================================
-
-  const handleVolumeChange = (event) => {
-    const newVolume =
-      Number(event.target.value);
-
-    if (!Number.isFinite(newVolume)) {
-      return;
-    }
-
-    const safeVolume = Math.min(
-      100,
-      Math.max(0, newVolume)
-    );
-
-    setVolume(safeVolume);
-
-    try {
-      localStorage.setItem(
-        "volume",
-        String(safeVolume)
+      audio.removeEventListener(
+        "loadedmetadata",
+        handleLoadedMetadata
       );
-    } catch (error) {
-      console.error("Failed to save volume:", error);
-    }
 
+      audio.removeEventListener(
+        "durationchange",
+        handleDurationChange
+      );
 
-    if (currentSong?.audio) {
-      currentSong.audio.volume =
-        safeVolume / 100;
-    }
-  };
+      audio.removeEventListener(
+        "timeupdate",
+        handleTimeUpdate
+      );
 
+      audio.removeEventListener(
+        "play",
+        handlePlay
+      );
 
-  // =========================================================
-  // MAXIMIZE
-  // =========================================================
+      audio.removeEventListener(
+        "pause",
+        handlePause
+      );
 
-  const handleMaximized = () => {
-    setIsMaximized(
-      (previous) => !previous
-    );
-  };
+      audio.removeEventListener(
+        "ended",
+        handleEnded
+      );
 
+      audio.removeEventListener(
+        "error",
+        handleError
+      );
+    };
+  }, []);
 
-  // =========================================================
-  // LOAD SONG DETAILS
-  // =========================================================
+  /* =========================================================
+     SHUFFLE
+  ========================================================= */
 
-  useEffect(() => {
-    let cancelled = false;
+  const toggleShuffle =
+    useCallback(() => {
+      setShuffle(
+        (value) => !value
+      );
+    }, []);
 
+  /* =========================================================
+     REPEAT
+     
+     off -> all -> one -> off
+  ========================================================= */
 
-    const loadDetails = async () => {
-      if (!currentSong?.id) {
-        setDetail(null);
-        return;
-      }
+  const toggleRepeatMode =
+    useCallback(() => {
+      setRepeatMode(
+        (mode) => {
+          if (
+            mode === "off"
+          ) {
+            return "all";
+          }
 
+          if (
+            mode === "all"
+          ) {
+            return "one";
+          }
 
-      try {
-        const result =
-          await getSongById(currentSong.id);
+          return "off";
+        }
+      );
+    }, []);
 
+  /* =========================================================
+     SEEK
+  ========================================================= */
 
-        if (cancelled) {
+  const seekTo =
+    useCallback(
+      (value) => {
+        const audio =
+          audioRef.current;
+
+        if (!audio) {
           return;
         }
 
+        const newTime =
+          Number(value);
 
-        const data =
-          result?.data?.[0] || null;
-
-        setDetail(data);
-      } catch (error) {
-        console.error(
-          "Failed to load song details:",
-          error
-        );
-
-        if (!cancelled) {
-          setDetail(null);
+        if (
+          !Number.isFinite(
+            newTime
+          )
+        ) {
+          return;
         }
-      }
-    };
 
-
-    loadDetails();
-
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentSong?.id]);
-
-
-  // =========================================================
-  // LOAD SUGGESTIONS
-  // =========================================================
-
-  useEffect(() => {
-    let cancelled = false;
-
-
-    const loadSuggestions = async () => {
-      if (!currentSong?.id) {
-        setSuggestions([]);
-        return;
-      }
-
-
-      try {
-        const result =
-          await getSuggestionSong(
-            currentSong.id
+        audio.currentTime =
+          Math.max(
+            0,
+            Math.min(
+              newTime,
+              Number.isFinite(
+                audio.duration
+              )
+                ? audio.duration
+                : newTime
+            )
           );
 
+        setCurrentTime(
+          audio.currentTime
+        );
+      },
+      []
+    );
 
-        if (cancelled) {
+  /* =========================================================
+     VOLUME
+  ========================================================= */
+
+  const changeVolume =
+    useCallback(
+      (value) => {
+        let newVolume =
+          Number(value);
+
+        if (
+          newVolume > 1
+        ) {
+          newVolume =
+            newVolume / 100;
+        }
+
+        newVolume =
+          Math.max(
+            0,
+            Math.min(
+              1,
+              newVolume
+            )
+          );
+
+        setVolume(
+          newVolume
+        );
+
+        if (
+          audioRef.current
+        ) {
+          audioRef.current.volume =
+            newVolume;
+        }
+
+        try {
+          localStorage.setItem(
+            "dreamly-volume",
+            String(
+              newVolume
+            )
+          );
+        } catch {
+          // Ignore
+        }
+      },
+      []
+    );
+
+  /* =========================================================
+     VOLUME SYNC
+  ========================================================= */
+
+  useEffect(() => {
+    if (
+      audioRef.current
+    ) {
+      audioRef.current.volume =
+        volume;
+    }
+  }, [volume]);
+
+  /* =========================================================
+     LYRICS
+  ========================================================= */
+
+  const fetchLyrics =
+    useCallback(
+      async (
+        selectedSong
+      ) => {
+        const target =
+          normalizeSong(
+            selectedSong
+          );
+
+        if (!target) {
+          setLyrics([]);
+          setLyricsText("");
+          setLyricsSynced(
+            false
+          );
+          setLyricsError(
+            ""
+          );
+          setActiveLyricIndex(
+            -1
+          );
+
           return;
         }
 
+        /*
+         * Prevent old song's
+         * lyrics from replacing
+         * current song lyrics.
+         */
 
-        const data =
-          Array.isArray(result?.data)
-            ? result.data
-            : [];
+        const requestId =
+          ++lyricsRequestRef.current;
 
-
-        setSuggestions(data);
-      } catch (error) {
-        console.error(
-          "Failed to load suggestions:",
-          error
+        setLyricsLoading(
+          true
         );
 
-        if (!cancelled) {
-          setSuggestions([]);
+        setLyricsError("");
+
+        setLyrics([]);
+
+        setLyricsText("");
+
+        setLyricsSynced(
+          false
+        );
+
+        setActiveLyricIndex(
+          -1
+        );
+
+        try {
+          const result =
+            await fetchSyncedLyrics(
+              target.name,
+              target.artist,
+              target.duration
+            );
+
+          if (
+            requestId !==
+            lyricsRequestRef.current
+          ) {
+            return;
+          }
+
+          setLyrics(
+            result.lines || []
+          );
+
+          setLyricsText(
+            result.plain || ""
+          );
+
+          setLyricsSynced(
+            Boolean(
+              result.synced
+            )
+          );
+
+          if (
+            !result.lines?.length &&
+            !result.plain
+          ) {
+            setLyricsError(
+              "No lyrics available."
+            );
+          }
+        } catch (error) {
+          if (
+            requestId !==
+            lyricsRequestRef.current
+          ) {
+            return;
+          }
+
+          console.error(
+            "Lyrics error:",
+            error
+          );
+
+          setLyrics([]);
+
+          setLyricsText(
+            "Could not load lyrics."
+          );
+
+          setLyricsSynced(
+            false
+          );
+
+          setLyricsError(
+            "Could not load lyrics."
+          );
+        } finally {
+          if (
+            requestId ===
+            lyricsRequestRef.current
+          ) {
+            setLyricsLoading(
+              false
+            );
+          }
         }
-      }
-    };
+      },
+      []
+    );
 
+  /* =========================================================
+     AUTO LOAD LYRICS
+  ========================================================= */
 
-    loadSuggestions();
-
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentSong?.id]);
-
-
-  // =========================================================
-  // LIKE SONG
-  // =========================================================
-
-  const toggleLikeSong = () => {
-    if (!currentSong?.id) {
-      return;
-    }
-
-
-    const audio =
-      currentSong?.audio;
-
-
-    const songData = {
-      id: currentSong.id,
-      name: currentSong.name || "",
-      audio:
-        audio?.currentSrc ||
-        audio?.src ||
-        currentSong?.url ||
-        "",
-      duration:
-        currentSong.duration || 0,
-      image:
-        currentSong.image || "",
-      artists:
-        currentSong.artists || {},
-    };
-
-
-    const alreadyLiked =
-      likedSongs.some(
-        (item) =>
-          item?.id === currentSong.id
-      );
-
-
-    const updatedSongs =
-      alreadyLiked
-        ? likedSongs.filter(
-            (item) =>
-              item?.id !== currentSong.id
-          )
-        : [
-            ...likedSongs,
-            songData,
-          ];
-
-
-    setLikedSongs(updatedSongs);
-
-
-    try {
-      localStorage.setItem(
-        "likedSongs",
-        JSON.stringify(updatedSongs)
-      );
-    } catch (error) {
-      console.error(
-        "Failed to save liked songs:",
-        error
-      );
-    }
-  };
-
-
-  // =========================================================
-  // SCROLL LEFT
-  // =========================================================
-
-  const scrollLeft = () => {
-    if (!scrollRef.current) {
-      return;
-    }
-
-    scrollRef.current.scrollBy({
-      left: -500,
-      behavior: "smooth",
-    });
-  };
-
-
-  // =========================================================
-  // SCROLL RIGHT
-  // =========================================================
-
-  const scrollRight = () => {
-    if (!scrollRef.current) {
-      return;
-    }
-
-    scrollRef.current.scrollBy({
-      left: 500,
-      behavior: "smooth",
-    });
-  };
-
-
-  // =========================================================
-  // SHARE
-  // =========================================================
-
-  const handleShare = async () => {
+  useEffect(() => {
     if (!currentSong) {
       return;
     }
 
+    fetchLyrics(
+      currentSong
+    );
+  }, [
+    currentSong,
+    fetchLyrics,
+  ]);
 
-    const albumId =
-      detail?.album?.id ||
-      currentSong?.album?.id;
+  /* =========================================================
+     ACTIVE LYRIC
+  ========================================================= */
 
+  useEffect(() => {
+    if (
+      !lyricsSynced ||
+      !lyrics.length
+    ) {
+      setActiveLyricIndex(
+        -1
+      );
 
-    const shareUrl = albumId
-      ? `${window.location.origin}/albums/${albumId}`
-      : window.location.href;
+      return;
+    }
 
+    let index = -1;
 
-    const shareData = {
-      title: songName,
-      text: `Listen to ${songName} on Musify`,
-      url: shareUrl,
-    };
-
-
-    try {
+    for (
+      let i = 0;
+      i < lyrics.length;
+      i++
+    ) {
       if (
-        navigator.share &&
-        typeof navigator.share === "function"
+        currentTime >=
+        Number(
+          lyrics[i].time
+        )
       ) {
-        await navigator.share(
-          shareData
-        );
-
-        return;
-      }
-
-
-      if (
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText ===
-          "function"
-      ) {
-        await navigator.clipboard.writeText(
-          shareUrl
-        );
-
-        console.log(
-          "Share URL copied to clipboard."
-        );
-      }
-    } catch (error) {
-      if (
-        error?.name !==
-        "AbortError"
-      ) {
-        console.error(
-          "Share failed:",
-          error
-        );
+        index = i;
+      } else {
+        break;
       }
     }
-  };
 
+    setActiveLyricIndex(
+      index
+    );
+  }, [
+    currentTime,
+    lyrics,
+    lyricsSynced,
+  ]);
 
-  // =========================================================
-  // MEDIA SESSION
-  // =========================================================
+  /* =========================================================
+     CURRENT LYRIC
+  ========================================================= */
+
+  const currentLyric =
+    activeLyricIndex >= 0
+      ? lyrics[
+          activeLyricIndex
+        ]
+      : null;
+
+  /* =========================================================
+     COVER IMAGE
+  ========================================================= */
+
+  useEffect(() => {
+    if (!currentSong) {
+      setCoverImage("");
+      return;
+    }
+
+    setCoverImage(
+      getImage(currentSong)
+    );
+  }, [currentSong]);
+
+  /* =========================================================
+     LIKE
+  ========================================================= */
+
+  const isSongLiked =
+    useCallback(
+      (songId) => {
+        return likedSongs.some(
+          (item) =>
+            String(
+              item.id
+            ) ===
+            String(songId)
+        );
+      },
+      [likedSongs]
+    );
+
+  const toggleLike =
+    useCallback(
+      (selectedSong) => {
+        const target =
+          normalizeSong(
+            selectedSong ||
+              currentSong
+          );
+
+        if (!target) {
+          return;
+        }
+
+        setLikedSongs(
+          (previous) => {
+            const exists =
+              previous.some(
+                (item) =>
+                  String(
+                    item.id
+                  ) ===
+                  String(
+                    target.id
+                  )
+              );
+
+            const updated =
+              exists
+                ? previous.filter(
+                    (item) =>
+                      String(
+                        item.id
+                      ) !==
+                      String(
+                        target.id
+                      )
+                  )
+                : [
+                    ...previous,
+                    target,
+                  ];
+
+            try {
+              localStorage.setItem(
+                "dreamly-liked-songs",
+                JSON.stringify(
+                  updated
+                )
+              );
+            } catch {
+              // Ignore
+            }
+
+            return updated;
+          }
+        );
+      },
+      [currentSong]
+    );
+
+  /* =========================================================
+     DOWNLOAD
+  ========================================================= */
+
+  const downloadSong =
+    useCallback(
+      async (
+        selectedSong
+      ) => {
+        const target =
+          normalizeSong(
+            selectedSong ||
+              currentSong
+          );
+
+        if (!target) {
+          return;
+        }
+
+        const url =
+          target.audio;
+
+        if (!url) {
+          console.warn(
+            "No download URL."
+          );
+
+          return;
+        }
+
+        try {
+          const response =
+            await fetch(url);
+
+          if (!response.ok) {
+            throw new Error(
+              `Download failed: ${response.status}`
+            );
+          }
+
+          const blob =
+            await response.blob();
+
+          const blobUrl =
+            URL.createObjectURL(
+              blob
+            );
+
+          const link =
+            document.createElement(
+              "a"
+            );
+
+          link.href =
+            blobUrl;
+
+          const safeName =
+            String(
+              target.name ||
+                "song"
+            )
+              .replace(
+                /[<>:"/\\|?*]/g,
+                ""
+              )
+              .trim() ||
+            "song";
+
+          link.download =
+            `${safeName}.mp3`;
+
+          document.body.appendChild(
+            link
+          );
+
+          link.click();
+
+          document.body.removeChild(
+            link
+          );
+
+          setTimeout(() => {
+            URL.revokeObjectURL(
+              blobUrl
+            );
+          }, 1000);
+        } catch (error) {
+          console.error(
+            "Download error:",
+            error
+          );
+
+          /*
+           * Fallback to opening
+           * the original URL.
+           */
+
+          try {
+            const link =
+              document.createElement(
+                "a"
+              );
+
+            link.href = url;
+
+            link.target =
+              "_blank";
+
+            link.rel =
+              "noopener noreferrer";
+
+            document.body.appendChild(
+              link
+            );
+
+            link.click();
+
+            document.body.removeChild(
+              link
+            );
+          } catch {
+            // Ignore
+          }
+        }
+      },
+      [currentSong]
+    );
+
+  /* =========================================================
+     MEDIA SESSION
+  ========================================================= */
 
   useEffect(() => {
     if (
       !currentSong ||
-      typeof navigator === "undefined" ||
-      !("mediaSession" in navigator) ||
-      typeof MediaMetadata ===
-        "undefined"
+      typeof navigator ===
+        "undefined" ||
+      !("mediaSession" in
+        navigator)
     ) {
-      return undefined;
+      return;
     }
-
 
     try {
       navigator.mediaSession.metadata =
         new MediaMetadata({
-          title: songName,
+          title:
+            currentSong.name ||
+            "Unknown Song",
 
           artist:
-            artistNames,
+            currentSong.artist ||
+            "Unknown Artist",
 
           album:
-            detail?.album?.name ||
-            "Musify",
+            currentSong.album?.name ||
+            currentSong.albumName ||
+            "",
 
-          artwork:
-            currentSong?.image
-              ? [
-                  {
-                    src:
-                      currentSong.image,
-
-                    sizes:
-                      "500x500",
-
-                    type:
-                      "image/jpeg",
-                  },
-                ]
-              : [],
+          artwork: coverImage
+            ? [
+                {
+                  src: coverImage,
+                  sizes:
+                    "512x512",
+                  type:
+                    "image/jpeg",
+                },
+              ]
+            : [],
         });
-
-
-      const playHandler = () => {
-        handlePlayPause();
-      };
-
-
-      const pauseHandler = () => {
-        handlePlayPause();
-      };
-
-
-      const previousHandler = () => {
-        prevSong();
-      };
-
-
-      const nextHandler = () => {
-        nextSong();
-      };
-
-
-      try {
-        navigator.mediaSession.setActionHandler(
-          "play",
-          playHandler
-        );
-      } catch (error) {
-        console.warn(
-          "MediaSession play unsupported:",
-          error
-        );
-      }
-
-
-      try {
-        navigator.mediaSession.setActionHandler(
-          "pause",
-          pauseHandler
-        );
-      } catch (error) {
-        console.warn(
-          "MediaSession pause unsupported:",
-          error
-        );
-      }
-
-
-      try {
-        navigator.mediaSession.setActionHandler(
-          "previoustrack",
-          previousHandler
-        );
-      } catch (error) {
-        console.warn(
-          "MediaSession previous unsupported:",
-          error
-        );
-      }
-
-
-      try {
-        navigator.mediaSession.setActionHandler(
-          "nexttrack",
-          nextHandler
-        );
-      } catch (error) {
-        console.warn(
-          "MediaSession next unsupported:",
-          error
-        );
-      }
-
-
-      return () => {
-        try {
-          navigator.mediaSession.setActionHandler(
-            "play",
-            null
-          );
-        } catch {}
-
-
-        try {
-          navigator.mediaSession.setActionHandler(
-            "pause",
-            null
-          );
-        } catch {}
-
-
-        try {
-          navigator.mediaSession.setActionHandler(
-            "previoustrack",
-            null
-          );
-        } catch {}
-
-
-        try {
-          navigator.mediaSession.setActionHandler(
-            "nexttrack",
-            null
-          );
-        } catch {}
-      };
     } catch (error) {
-      console.error(
-        "MediaSession error:",
+      console.warn(
+        "MediaSession metadata error:",
         error
       );
     }
-
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    currentSong?.id,
-    currentSong?.image,
-    songName,
-    artistNames,
-    detail?.album?.name,
-    isPlaying,
+    currentSong,
+    coverImage,
   ]);
 
+  /* =========================================================
+     MEDIA SESSION ACTIONS
+  ========================================================= */
 
-  // =========================================================
-  // NO CURRENT SONG
-  // =========================================================
+  useEffect(() => {
+    if (
+      typeof navigator ===
+        "undefined" ||
+      !("mediaSession" in
+        navigator)
+    ) {
+      return;
+    }
 
-  if (!currentSong) {
-    return null;
-  }
+    const actions = {
+      play: () =>
+        resumeMusic(),
 
+      pause: () =>
+        pauseMusic(),
 
-  // =========================================================
-  // RENDER
-  // =========================================================
+      nexttrack: () =>
+        nextSong(),
+
+      previoustrack: () =>
+        prevSong(),
+
+      seekbackward: () => {
+        const audio =
+          audioRef.current;
+
+        if (!audio) {
+          return;
+        }
+
+        seekTo(
+          audio.currentTime - 10
+        );
+      },
+
+      seekforward: () => {
+        const audio =
+          audioRef.current;
+
+        if (!audio) {
+          return;
+        }
+
+        seekTo(
+          audio.currentTime + 10
+        );
+      },
+    };
+
+    Object.entries(
+      actions
+    ).forEach(
+      ([
+        action,
+        handler,
+      ]) => {
+        try {
+          navigator.mediaSession.setActionHandler(
+            action,
+            handler
+          );
+        } catch {
+          // Some browsers don't support all actions.
+        }
+      }
+    );
+
+    return () => {
+      Object.keys(
+        actions
+      ).forEach(
+        (action) => {
+          try {
+            navigator.mediaSession.setActionHandler(
+              action,
+              null
+            );
+          } catch {
+            // Ignore
+          }
+        }
+      );
+    };
+  }, [
+    resumeMusic,
+    pauseMusic,
+    nextSong,
+    prevSong,
+    seekTo,
+  ]);
+
+  /* =========================================================
+     MEDIA SESSION STATE
+  ========================================================= */
+
+  useEffect(() => {
+    if (
+      typeof navigator ===
+        "undefined" ||
+      !("mediaSession" in
+        navigator)
+    ) {
+      return;
+    }
+
+    try {
+      navigator.mediaSession.playbackState =
+        isPlaying
+          ? "playing"
+          : "paused";
+    } catch {
+      // Ignore
+    }
+  }, [isPlaying]);
+
+  /* =========================================================
+     CONTEXT VALUE
+  ========================================================= */
+
+  const contextValue =
+    useMemo(
+      () => ({
+        /*
+         * PLAYER
+         */
+
+        currentSong,
+
+        song,
+
+        currentIndex,
+
+        isPlaying,
+
+        audio:
+          audioRef.current,
+
+        audioRef,
+
+        /*
+         * PROGRESS
+         */
+
+        currentTime,
+
+        duration,
+
+        /*
+         * VOLUME
+         */
+
+        volume,
+
+        /*
+         * COVER
+         */
+
+        coverImage,
+
+        /*
+         * PLAYBACK
+         */
+
+        playMusic,
+
+        pauseMusic,
+
+        resumeMusic,
+
+        nextSong,
+
+        prevSong,
+
+        seekTo,
+
+        /*
+         * SHUFFLE
+         */
+
+        shuffle,
+
+        toggleShuffle,
+
+        /*
+         * REPEAT
+         */
+
+        repeatMode,
+
+        toggleRepeatMode,
+
+        /*
+         * LYRICS
+         */
+
+        lyrics,
+
+        lyricsText,
+
+        lyricsSynced,
+
+        lyricsLoading,
+
+        lyricsError,
+
+        activeLyricIndex,
+
+        currentLyric,
+
+        fetchLyrics,
+
+        /*
+         * DOWNLOAD
+         */
+
+        downloadSong,
+
+        /*
+         * LIKE
+         */
+
+        likedSongs,
+
+        isSongLiked,
+
+        toggleLike,
+
+        /*
+         * QUEUE CONTROL
+         */
+
+        setSong,
+
+        setCurrentSong,
+
+        setCurrentIndex,
+
+        /*
+         * COVER CONTROL
+         */
+
+        setCoverImage,
+
+        /*
+         * VOLUME CONTROL
+         */
+
+        setVolume:
+          changeVolume,
+      }),
+      [
+        currentSong,
+        song,
+        currentIndex,
+        isPlaying,
+        currentTime,
+        duration,
+        volume,
+        coverImage,
+        playMusic,
+        pauseMusic,
+        resumeMusic,
+        nextSong,
+        prevSong,
+        seekTo,
+        shuffle,
+        toggleShuffle,
+        repeatMode,
+        toggleRepeatMode,
+        lyrics,
+        lyricsText,
+        lyricsSynced,
+        lyricsLoading,
+        lyricsError,
+        activeLyricIndex,
+        currentLyric,
+        fetchLyrics,
+        downloadSong,
+        likedSongs,
+        isSongLiked,
+        toggleLike,
+        changeVolume,
+      ]
+    );
 
   return (
-    <div
-      className="
-        fixed
-        bottom-14
-        lg:bottom-0
-        left-0
-        w-screen
-        z-20
-        flex
-        justify-center
-        items-center
-      "
+    <MusicContext.Provider
+      value={contextValue}
     >
-      <div
-        className={`
-          flex
-          flex-col
-          w-screen
-          bg-auto
-          rounded-tl-xl
-          rounded-tr-xl
-          relative
-          transition-all
-          ease-in-out
-          duration-500
-
-          ${
-            isMaximized
-              ? "pt-4 backdrop-brightness-[0.4]"
-              : "lg:h-[6rem] h-auto p-4 Player"
-          }
-        `}
-      >
-        {/* =====================================================
-            MINI PLAYER
-        ====================================================== */}
-
-        {!isMaximized && (
-          <>
-            {/* PROGRESS */}
-
-            <div
-              className="
-                flex
-                items-center
-                w-full
-                mb-4
-                gap-3
-                h-0
-              "
-            >
-              <span className="text-xs">
-                {formatTime(
-                  currentTime
-                )}
-              </span>
-
-
-              <input
-                ref={progressRef}
-                type="range"
-                min="0"
-                max="100"
-                step="0.1"
-                value={progress}
-                onChange={
-                  handleProgressChange
-                }
-                className="
-                  range
-                  flex-1
-                "
-                style={{
-                  background: `
-                    linear-gradient(
-                      to right,
-                      ${
-                        theme === "dark"
-                          ? "#ddd"
-                          : "#09090B"
-                      }
-                      ${progress}%,
-
-                      ${
-                        theme === "dark"
-                          ? "#252525"
-                          : "#dddddd"
-                      }
-                      ${progress}%
-                    )
-                  `,
-                }}
-              />
-
-
-              <span className="text-xs">
-                {formatTime(
-                  duration
-                )}
-              </span>
-            </div>
-
-
-            {/* PLAYER CONTENT */}
-
-            <div
-              className="
-                flex
-                justify-between
-                items-center
-                mb-4
-              "
-            >
-              {/* SONG */}
-
-              <div
-                className="
-                  flex
-                  w-full
-                  lg:w-auto
-                  cursor-pointer
-                "
-                onClick={
-                  handleMaximized
-                }
-              >
-                <div
-                  className="
-                    flex
-                    items-center
-                    gap-3
-                  "
-                >
-                  <img
-                    src={
-                      currentSong?.image ||
-                      "/Unknown.png"
-                    }
-                    alt={songName}
-                    width="55"
-                    height="55"
-                    className="
-                      rounded
-                      object-cover
-                    "
-                  />
-
-
-                  <div
-                    className="
-                      flex
-                      flex-col
-                      overflow-hidden
-                      p-1
-                      w-[14rem]
-                      h-[2.9rem]
-                    "
-                  >
-                    <span
-                      className="
-                        h-[1.5rem]
-                        overflow-hidden
-                        whitespace-nowrap
-                      "
-                    >
-                      {songName}
-                    </span>
-
-
-                    <span
-                      className="
-                        text-xs
-                        overflow-hidden
-                        whitespace-nowrap
-                      "
-                    >
-                      {artistNames}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-
-              {/* CONTROLS */}
-
-              <div
-                className="
-                  flex
-                  items-center
-                  justify-center
-                "
-              >
-                <div
-                  className="
-                    flex
-                    gap-5
-                    items-center
-                  "
-                >
-                  {/* REPEAT */}
-
-                  {repeatMode === "none" ? (
-                    <LuRepeat
-                      className="
-                        text-2xl
-                        hidden
-                        lg:block
-                        cursor-pointer
-                        hover:text-[#ff3448]
-                      "
-                      onClick={
-                        toggleRepeatMode
-                      }
-                      title="Repeat"
-                    />
-                  ) : (
-                    <LuRepeat1
-                      className="
-                        text-2xl
-                        hidden
-                        lg:block
-                        cursor-pointer
-                        text-[#ff3448]
-                      "
-                      onClick={
-                        toggleRepeatMode
-                      }
-                      title="Repeat One"
-                    />
-                  )}
-
-
-                  {/* PREVIOUS */}
-
-                  <IoMdSkipBackward
-                    className="
-                      icon
-                      hidden
-                      lg:block
-                      hover:scale-110
-                      text-2xl
-                      cursor-pointer
-                    "
-                    onClick={
-                      prevSong
-                    }
-                  />
-
-
-                  {/* PLAY PAUSE */}
-
-                  <div
-                    className="
-                      rounded-full
-                      p-2
-                    "
-                  >
-                    {isPlaying ? (
-                      <FaPause
-                        className="
-                          p-[0.1rem]
-                          icon
-                          hover:scale-110
-                          text-xl
-                          lg:text-2xl
-                          cursor-pointer
-                        "
-                        onClick={
-                          handlePlayPause
-                        }
-                      />
-                    ) : (
-                      <FaPlay
-                        className="
-                          icon
-                          p-[0.1rem]
-                          hover:scale-110
-                          text-xl
-                          lg:text-2xl
-                          cursor-pointer
-                        "
-                        onClick={
-                          handlePlayPause
-                        }
-                      />
-                    )}
-                  </div>
-
-
-                  {/* NEXT */}
-
-                  <IoMdSkipForward
-                    className="
-                      icon
-                      hidden
-                      lg:block
-                      hover:scale-110
-                      text-2xl
-                      cursor-pointer
-                    "
-                    onClick={
-                      nextSong
-                    }
-                  />
-
-
-                  {/* SHUFFLE */}
-
-                  <PiShuffleBold
-                    className={`
-                      hidden
-                      lg:block
-                      hover:text-[#fd3a4e]
-                      text-2xl
-                      cursor-pointer
-
-                      ${
-                        shuffle
-                          ? "text-[#fd3a4e]"
-                          : ""
-                      }
-                    `}
-                    onClick={
-                      toggleShuffle
-                    }
-                    title="Shuffle"
-                  />
-                </div>
-              </div>
-
-
-              {/* DESKTOP ACTIONS */}
-
-              <div
-                className="
-                  lg:flex
-                  hidden
-                  items-center
-                  gap-5
-                  justify-end
-                "
-              >
-                {/* LIKE */}
-
-                <button
-                  type="button"
-                  onClick={
-                    toggleLikeSong
-                  }
-                  title={
-                    isLiked
-                      ? "Unlike Song"
-                      : "Like Song"
-                  }
-                >
-                  {isLiked ? (
-                    <FaHeart
-                      className="
-                        text-red-500
-                      "
-                    />
-                  ) : (
-                    <FaRegHeart
-                      className="icon"
-                    />
-                  )}
-                </button>
-
-
-                {/* DOWNLOAD */}
-
-                <MdDownload
-                  className="
-                    hover:text-[#fd3a4e]
-                    icon
-                    text-2xl
-                    cursor-pointer
-                  "
-                  onClick={
-                    downloadSong
-                  }
-                  title="Download Song"
-                />
-
-
-                {/* VOLUME */}
-
-                <div
-                  className="
-                    items-center
-                    gap-1
-                    flex
-                  "
-                >
-                  <PiSpeakerLowFill
-                    className="text-xl"
-                  />
-
-
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={volume}
-                    onChange={
-                      handleVolumeChange
-                    }
-                    className="
-                      volume
-                      icon
-                      rounded-lg
-                      appearance-none
-                      cursor-pointer
-                      w-[80px]
-                      h-1
-                    "
-                    style={{
-                      background: `
-                        linear-gradient(
-                          to right,
-                          ${
-                            theme === "dark"
-                              ? "#ddd"
-                              : "#09090B"
-                          }
-                          ${volume}%,
-
-                          ${
-                            theme === "dark"
-                              ? "#252525"
-                              : "#dddddd"
-                          }
-                          ${volume}%
-                        )
-                      `,
-                    }}
-                    title="Volume"
-                  />
-                </div>
-
-
-                {/* MAXIMIZE */}
-
-                <CiMaximize1
-                  title="Maximize"
-                  className="
-                    icon
-                    p-1
-                    text-2xl
-                    rounded
-                    cursor-pointer
-                  "
-                  onClick={
-                    handleMaximized
-                  }
-                />
-              </div>
-            </div>
-          </>
-        )}
-
-
-        {/* =====================================================
-            MAXIMIZED PLAYER
-        ====================================================== */}
-
-        {isMaximized && (
-          <div
-            className="
-              flex
-              w-full
-              flex-col
-              p-2
-              lg:h-[40rem]
-              h-[45rem]
-              gap-4
-              scroll-hide
-              overflow-y-scroll
-              rounded-tl-2xl
-              rounded-tr-2xl
-              Player
-            "
-          >
-            {/* CLOSE */}
-
-            <div
-              className="
-                flex
-                w-full
-                justify-end
-              "
-            >
-              <IoIosClose
-                className="
-                  icon
-                  text-[3rem]
-                  cursor-pointer
-                "
-                onClick={
-                  handleMaximized
-                }
-                title="Close"
-              />
-            </div>
-
-
-            {/* MAIN SONG */}
-
-            <div
-              className="
-                flex
-                lg:flex-row
-                flex-col
-              "
-            >
-              {/* IMAGE */}
-
-              <div
-                className="
-                  flex
-                  justify-center
-                  items-center
-                  lg:pl-[2.5rem]
-                "
-              >
-                <img
-                  src={
-                    currentSong?.image ||
-                    "/Unknown.png"
-                  }
-                  alt={songName}
-                  className="
-                    h-[22rem]
-                    lg:h-[17rem]
-                    w-auto
-                    rounded-lg
-                    object-cover
-                    shadow-2xl
-                    profile
-                  "
-                  onError={(event) => {
-                    event.currentTarget.src = "/Unknown.png";
-                  }}
-                />
-              </div>
-
-
-              {/* SONG INFORMATION */}
-
-              <div
-                className="
-                  flex
-                  flex-col
-                  justify-center
-                  lg:w-[70%]
-                  lg:pl-5
-                  p-1
-                  gap-4
-                "
-              >
-                <div
-                  className="
-                    flex
-                    flex-col
-                    gap-2
-                    mt-5
-                    lg:ml-1
-                    ml-[1.5rem]
-                  "
-                >
-                  {/* TITLE */}
-
-                  <span
-                    className="
-                      text-2xl
-                      font-semibold
-                      break-words
-                    "
-                  >
-                    {songName}
-                  </span>
-
-
-                  {/* ARTIST + ACTIONS */}
-
-                  <div
-                    className="
-                      flex
-                      w-[98%]
-                      mb-1
-                      text-base
-                      font-medium
-                      justify-between
-                      items-center
-                    "
-                  >
-                    <span
-                      className="
-                        truncate
-                      "
-                    >
-                      {artistNames}
-                    </span>
-
-
-                    <span
-                      className="
-                        flex
-                        gap-3
-                        items-center
-                        ml-3
-                      "
-                    >
-                      {/* LIKE */}
-
-                      <button
-                        type="button"
-                        onClick={
-                          toggleLikeSong
-                        }
-                        title={
-                          isLiked
-                            ? "Unlike Song"
-                            : "Like Song"
-                        }
-                      >
-                        {isLiked ? (
-                          <FaHeart
-                            className="
-                              text-red-500
-                              text-2xl
-                            "
-                          />
-                        ) : (
-                          <FaRegHeart
-                            className="
-                              icon
-                              text-2xl
-                              hover:text-red-500
-                            "
-                          />
-                        )}
-                      </button>
-
-
-                      {/* DOWNLOAD */}
-
-                      <MdDownload
-                        className="
-                          text-[1.8rem]
-                          cursor-pointer
-                          icon
-                          hover:text-[#fd3a4e]
-                        "
-                        onClick={
-                          downloadSong
-                        }
-                        title="Download Song"
-                      />
-                    </span>
-                  </div>
-                </div>
-
-
-                {/* PROGRESS */}
-
-                <div
-                  className="
-                    flex
-                    items-center
-                    w-full
-                    gap-3
-                  "
-                >
-                  <span
-                    className="
-                      lg:hidden
-                      block
-                      text-xs
-                    "
-                  >
-                    {formatTime(
-                      currentTime
-                    )}
-                  </span>
-
-
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={progress}
-                    onChange={
-                      handleProgressChange
-                    }
-                    className="
-                      range
-                      flex-1
-                    "
-                    style={{
-                      background: `
-                        linear-gradient(
-                          to right,
-
-                          ${
-                            theme === "dark"
-                              ? "#ddd"
-                              : "#252525"
-                          }
-                          ${progress}%,
-
-                          ${
-                            theme === "dark"
-                              ? "#252525"
-                              : "#dddddd"
-                          }
-                          ${progress}%
-                        )
-                      `,
-                    }}
-                  />
-
-
-                  <span
-                    className="
-                      lg:hidden
-                      block
-                      text-xs
-                    "
-                  >
-                    {formatTime(
-                      duration
-                    )}
-                  </span>
-                </div>
-
-
-                {/* CONTROLS */}
-
-                <div
-                  className="
-                    flex
-                    items-center
-                    justify-center
-                  "
-                >
-                  <div
-                    className="
-                      flex
-                      items-center
-                      gap-5
-                      p-8
-                    "
-                  >
-                    {/* REPEAT */}
-
-                    {repeatMode === "none" ? (
-                      <LuRepeat
-                        className="
-                          text-2xl
-                          cursor-pointer
-                          hover:text-[#ff3448]
-                        "
-                        onClick={
-                          toggleRepeatMode
-                        }
-                        title="Repeat"
-                      />
-                    ) : (
-                      <LuRepeat1
-                        className="
-                          text-2xl
-                          cursor-pointer
-                          text-[#ff3448]
-                        "
-                        onClick={
-                          toggleRepeatMode
-                        }
-                        title="Repeat One"
-                      />
-                    )}
-
-
-                    {/* PREVIOUS */}
-
-                    <IoMdSkipBackward
-                      className="
-                        icon
-                        hover:scale-110
-                        text-3xl
-                        cursor-pointer
-                      "
-                      onClick={
-                        prevSong
-                      }
-                      title="Previous"
-                    />
-
-
-                    {/* PLAY / PAUSE */}
-
-                    {isPlaying ? (
-                      <FaPause
-                        className="
-                          p-[0.1rem]
-                          icon
-                          hover:scale-110
-                          text-3xl
-                          cursor-pointer
-                        "
-                        onClick={
-                          handlePlayPause
-                        }
-                        title="Pause"
-                      />
-                    ) : (
-                      <FaPlay
-                        className="
-                          icon
-                          p-[0.1rem]
-                          hover:scale-110
-                          text-3xl
-                          cursor-pointer
-                        "
-                        onClick={
-                          handlePlayPause
-                        }
-                        title="Play"
-                      />
-                    )}
-
-
-                    {/* NEXT */}
-
-                    <IoMdSkipForward
-                      className="
-                        icon
-                        hover:scale-110
-                        text-3xl
-                        cursor-pointer
-                      "
-                      onClick={
-                        nextSong
-                      }
-                      title="Next"
-                    />
-
-
-                    {/* SHUFFLE */}
-
-                    <PiShuffleBold
-                      className={`
-                        text-3xl
-                        cursor-pointer
-                        hover:text-[#fd3a4e]
-
-                        ${
-                          shuffle
-                            ? "text-[#fd3a4e]"
-                            : ""
-                        }
-                      `}
-                      onClick={
-                        toggleShuffle
-                      }
-                      title="Shuffle"
-                    />
-                  </div>
-
-
-                  {/* SHARE */}
-
-                  <IoShareSocial
-                    className="
-                      icon
-                      text-3xl
-                      hidden
-                      lg:block
-                      cursor-pointer
-                      hover:scale-105
-                      mr-4
-                    "
-                    onClick={
-                      handleShare
-                    }
-                    title="Share"
-                  />
-                </div>
-              </div>
-            </div>
-
-
-            {/* =================================================
-                SUGGESTIONS
-            ================================================== */}
-
-            {suggestions.length > 0 && (
-              <div
-                className="
-                  flex
-                  flex-col
-                  justify-center
-                  items-center
-                  w-full
-                "
-              >
-                <h2
-                  className="
-                    m-4
-                    text-xl
-                    lg:text-2xl
-                    font-semibold
-                    w-full
-                    ml-[2.5rem]
-                    lg:ml-[5.5rem]
-                  "
-                >
-                  You Might Like
-                </h2>
-
-
-                <div
-                  className="
-                    flex
-                    justify-center
-                    items-center
-                    gap-3
-                    w-full
-                  "
-                >
-                  {/* LEFT */}
-
-                  <MdOutlineKeyboardArrowLeft
-                    className="
-                      text-3xl
-                      hover:scale-125
-                      cursor-pointer
-                      h-[9rem]
-                      hidden
-                      lg:block
-                      arrow-btn
-                    "
-                    onClick={
-                      scrollLeft
-                    }
-                  />
-
-
-                  {/* SONG LIST */}
-
-                  <div
-                    ref={scrollRef}
-                    className="
-                      grid
-                      grid-rows-1
-                      grid-flow-col
-                      justify-start
-                      overflow-x-scroll
-                      scroll-hide
-                      items-center
-                      gap-3
-                      lg:gap-[.35rem]
-                      w-full
-                      px-3
-                      lg:px-0
-                      scroll-smooth
-                    "
-                  >
-                    {suggestions.map(
-                      (
-                        suggestion,
-                        index
-                      ) => (
-                        <SongGrid
-                          key={
-                            suggestion?.id ||
-                            index
-                          }
-                          {...suggestion}
-                          song={
-                            suggestions
-                          }
-                        />
-                      )
-                    )}
-                  </div>
-
-
-                  {/* RIGHT */}
-
-                  <MdOutlineKeyboardArrowRight
-                    className="
-                      text-3xl
-                      hover:scale-125
-                      cursor-pointer
-                      h-[9rem]
-                      hidden
-                      lg:block
-                      arrow-btn
-                    "
-                    onClick={
-                      scrollRight
-                    }
-                  />
-                </div>
-              </div>
-            )}
-
-
-            {/* =================================================
-                ARTISTS
-            ================================================== */}
-
-            {currentSong?.artists?.primary
-              ?.length > 0 && (
-              <div
-                className="
-                  flex
-                  flex-col
-                  pt-3
-                "
-              >
-                <h2
-                  className="
-                    text-xl
-                    lg:text-2xl
-                    font-semibold
-                    w-full
-                    ml-[2rem]
-                    lg:ml-[3.5rem]
-                    mb-3
-                  "
-                >
-                  Artists
-                </h2>
-
-
-                <div
-                  className="
-                    grid
-                    grid-flow-col
-                    lg:w-max
-                    w-full
-                    scroll-smooth
-                    gap-[1rem]
-                    lg:gap-[1.5rem]
-                    lg:pl-[2rem]
-                    pl-[1rem]
-                    overflow-x-scroll
-                    scroll-hide
-                  "
-                >
-                  {currentSong.artists.primary.map(
-                    (
-                      artist,
-                      index
-                    ) => (
-                      <ArtistItems
-                        key={
-                          artist?.id ||
-                          index
-                        }
-                        {...artist}
-                      />
-                    )
-                  )}
-                </div>
-              </div>
-            )}
-
-
-            {/* =================================================
-                ALBUM
-            ================================================== */}
-
-            {detail?.album?.id && (
-              <div
-                className="
-                  flex
-                  flex-col
-                  lg:flex-row
-                  gap-[2rem]
-                "
-              >
-                <div
-                  className="
-                    flex
-                    flex-col
-                  "
-                >
-                  <h2
-                    className="
-                      text-xl
-                      lg:text-2xl
-                      font-semibold
-                      w-full
-                      ml-[2rem]
-                      lg:ml-[3.5rem]
-                    "
-                  >
-                    From Album...
-                  </h2>
-
-
-                  <Link
-                    to={`/albums/${detail.album.id}`}
-                    className="
-                      card
-                      w-[12.5rem]
-                      h-fit
-                      overflow-hidden
-                      border-[0.1px]
-                      p-1
-                      rounded-lg
-                      lg:mx-[2rem]
-                      mt-[1rem]
-                    "
-                  >
-                    <div className="p-1">
-                      <img
-                        src={
-                          detail?.album
-                            ?.image?.[0]
-                            ?.url ||
-                          currentSong?.image ||
-                          "/Unknown.png"
-                        }
-                        alt={
-                          detail?.album
-                            ?.name ||
-                          songName
-                        }
-                        className="
-                          rounded-lg
-                          w-full
-                        "
-                      />
-                    </div>
-
-
-                    <div
-                      className="
-                        w-full
-                        flex
-                        flex-col
-                        justify-center
-                        pl-2
-                        pb-2
-                      "
-                    >
-                      <span
-                        className="
-                          font-semibold
-                          text-[1.1rem]
-                          overflow-hidden
-                        "
-                      >
-                        {detail?.album?.name
-                          ? he.decode(
-                              detail.album.name
-                            )
-                          : "Unknown Album"}
-                      </span>
-                    </div>
-                  </Link>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      {children}
+    </MusicContext.Provider>
   );
 };
 
+/* =========================================================
+   DEFAULT EXPORT
+========================================================= */
 
-export default Player;
+export default MusicContext;
